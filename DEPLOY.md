@@ -27,7 +27,7 @@ Set these in **Vercel → Project → Settings → Environment Variables** (or y
 |------|----------|-------------------|
 | **`DATABASE_URL`** | **Yes** | Supabase **pooler** URL (`…pooler…:6543…?pgbouncer=true&sslmode=require`). Used at runtime by Prisma. |
 | **`DIRECT_URL`** | Optional at runtime | Direct Postgres URL (`db.*.supabase.co:5432`). Needed for `prisma migrate` / `db push` from your laptop or CI — **not** required for the API process to answer HTTP requests if the schema is already applied. |
-| **`CLIENT_ORIGIN`** | **Yes** (for browser) | Comma-separated **exact** origins allowed by CORS (no path). Include your **future** Vercel frontend URL(s), e.g. `https://your-app.vercel.app`. For local dev you keep `http://localhost:5173`. Example: `https://ai-restaurant.vercel.app,http://localhost:5173` |
+| **`CLIENT_ORIGIN`** | **Yes** (for browser) | Comma-separated origins where the **React app** is hosted — **not** the API URL. Example: `https://ai-restaurant-client.vercel.app,http://localhost:5173`. Wrong value (e.g. `https://…-server.vercel.app`) causes **CORS** to block the browser. Trailing slashes are OK; they are normalized. |
 | **`PORT`** | No | Set automatically on Vercel; local default `4000`. |
 
 **Do not commit** real secrets — set them only in the hosting dashboard.

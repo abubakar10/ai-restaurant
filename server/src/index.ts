@@ -9,11 +9,19 @@ import { prisma } from "./prisma.js";
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
 
+/** Allowed browser origins (comma-separated). Must be your *frontend* URL(s), not the API. Trailing slashes stripped. */
+function corsOrigins(): string[] {
+  const raw = process.env.CLIENT_ORIGIN?.trim();
+  if (!raw) return ["http://localhost:5173"];
+  return raw
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
 app.use(
   cors({
-    origin: process.env.CLIENT_ORIGIN?.split(",").map((s) => s.trim()) ?? [
-      "http://localhost:5173",
-    ],
+    origin: corsOrigins(),
     credentials: true,
   })
 );
