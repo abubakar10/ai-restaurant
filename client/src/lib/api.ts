@@ -26,12 +26,18 @@ export async function api<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  // Do not send Content-Type on GET/HEAD — it forces a CORS preflight (OPTIONS) that can fail on some hosts.
+  const headers = new Headers(init?.headers);
+  if (method !== "GET" && method !== "HEAD") {
+    if (!headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+  }
+
   const res = await fetch(apiUrl(path), {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    headers,
   });
   const text = await res.text();
   if (!res.ok) {

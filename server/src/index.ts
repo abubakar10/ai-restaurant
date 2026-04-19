@@ -22,7 +22,7 @@ function corsOrigins(): string[] {
 app.use(
   cors({
     origin: corsOrigins(),
-    credentials: true,
+    credentials: false,
   })
 );
 app.use(compression());
