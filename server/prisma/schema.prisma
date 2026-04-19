@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  /// Pooled URL (e.g. Supabase :6543) — used by the app at runtime
+  url       = env("DATABASE_URL")
+  /// Direct Postgres URL — required for `prisma db push` / migrations when using a pooler
+  directUrl = env("DIRECT_URL")
+}
+
+/// Single location for Milestone 1
+model Location {
+  id   String @id @default(uuid())
+  name String
+}
+
+model MenuItem {
+  id        String       @id @default(uuid())
+  code      String       @unique
+  name      String
+  colorHex  String?
+  sortOrder Int          @default(0)
+  recipe    RecipeLine[]
+  sales     SalesEntry[]
+}
+
+/// Canonical ingredient + stock + vendor snapshot for Phase 1
+model Ingredient {
+  id               String       @id @default(uuid())
+  internalNumber   String       @unique
+  name             String
+  class            String
+  type             String       @default("Food")
+  /// PAR — minimum level to maintain
+  parLevel         Decimal      @db.Decimal(14, 6)
+  /// Stock in inventoryUnit (kg for weight SKUs, each for count)
+  onHand           Decimal      @db.Decimal(14, 6)
+  inventoryUnit    InventoryUnit
+  vendorName       String?
+  supplierSku      String?
+  minOrder         Decimal?     @db.Decimal(14, 6)
+  unitCost         Decimal?     @db.Decimal(14, 4)
+  /// e.g. 2 kg per pack
+  orderPackAmount  Decimal?     @db.Decimal(14, 6)
+  orderPackLabel   String?
+  recipeLines      RecipeLine[]
+}
+
+enum InventoryUnit {
+  KG
+  EACH
+}
+
+model RecipeLine {
+  id           String      @id @default(uuid())
+  menuItemId   String
+  menuItem     MenuItem    @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  ingredientId String
+  ingredient   Ingredient  @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  /// Amount in `unit`
+  amount       Decimal     @db.Decimal(14, 6)
+  unit         RecipeUnit
+
+  @@index([menuItemId])
+  @@index([ingredientId])
+}
+
+enum RecipeUnit {
+  GRAM
+  EACH
+  KG
+}
+
+model SalesEntry {
+  id         String   @id @default(uuid())
+  soldAt     DateTime @default(now())
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  quantity   Int
+
+  @@index([menuItemId])
+  @@index([soldAt])
+}

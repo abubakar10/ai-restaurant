@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --color-background: #07060e;
+  --color-foreground: #f4f2ff;
+  --color-muted: #9d95b8;
+  --color-card: rgba(20, 18, 35, 0.65);
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-accent: #a78bfa;
+  --color-accent-2: #22d3ee;
+  --color-accent-3: #fb923c;
+}
+
+@utility font-display {
+  font-family: "Outfit", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    @apply antialiased;
+    color-scheme: dark;
+  }
+  body {
+    @apply min-h-screen text-foreground font-sans overflow-x-hidden;
+    background: radial-gradient(
+        ellipse 120% 80% at 50% -30%,
+        rgba(124, 58, 237, 0.35),
+        transparent 55%
+      ),
+      radial-gradient(
+        ellipse 80% 50% at 100% 0%,
+        rgba(34, 211, 238, 0.12),
+        transparent 50%
+      ),
+      radial-gradient(
+        ellipse 60% 40% at 0% 100%,
+        rgba(251, 146, 60, 0.1),
+        transparent 45%
+      ),
+      #07060e;
+  }
+}
+
+.mesh-orbs {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.mesh-orbs span {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.2;
+  animation: float 28s ease-in-out infinite;
+}
+
+.mesh-orbs span:nth-child(1) {
+  width: 420px;
+  height: 420px;
+  background: linear-gradient(135deg, #7c3aed, #2563eb);
+  top: -120px;
+  right: -80px;
+  animation-delay: 0s;
+}
+
+.mesh-orbs span:nth-child(2) {
+  width: 360px;
+  height: 360px;
+  background: linear-gradient(135deg, #06b6d4, #8b5cf6);
+  bottom: 10%;
+  left: -100px;
+  animation-delay: -7s;
+}
+
+.mesh-orbs span:nth-child(3) {
+  width: 280px;
+  height: 280px;
+  background: linear-gradient(135deg, #f97316, #ec4899);
+  top: 40%;
+  right: 15%;
+  animation-delay: -12s;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(30px, -20px) scale(1.05);
+  }
+  66% {
+    transform: translate(-20px, 15px) scale(0.98);
+  }
+}
+
+.glass-panel {
+  @apply rounded-2xl border border-white/10 bg-white/[0.06] shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-xl;
+}
+
+.gradient-text {
+  background: linear-gradient(
+    120deg,
+    #e9d5ff 0%,
+    #a78bfa 35%,
+    #22d3ee 70%,
+    #fb923c 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.shimmer {
+  background: linear-gradient(
+    110deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 3s ease infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
