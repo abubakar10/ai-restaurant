@@ -37,7 +37,7 @@ export function Layout() {
             </div>
             <div>
               <p className="font-display text-lg font-semibold tracking-tight text-white">
-                Nexus Kitchen
+                Restaurant Management
               </p>
               <p className="text-xs text-muted">AI inventory · Operations</p>
             </div>

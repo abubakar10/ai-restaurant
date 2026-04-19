@@ -25,7 +25,7 @@ A **single web application** that helps the kitchen team see **stock health**, *
 - **Frontend:** React, TypeScript, Vite, Tailwind — responsive UI tuned for **operations use** (dense data, readable on mobile).
 - **Backend:** Node.js (Express), **Prisma** ORM, **PostgreSQL** (works well with **Supabase** for hosting).
 - **Data:** Demo data is **seeded in the repo** (`server/prisma/seed.ts`), structured like a **menu + recipes + PAR + vendors** model. It is **not automatically the same as every cell** in an external Excel unless you explicitly imported or matched it.
-- **Branding:** The product name shown in the UI (e.g. **“Nexus Kitchen”**) is a **placeholder** unless the client asked for a specific name.
+- **Branding:** The product name shown in the UI is **“Restaurant Management”** (adjust if the client wants a different trade name).
 
 ---
 

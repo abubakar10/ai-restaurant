@@ -6,6 +6,10 @@ Web dashboard (React + Vite + Tailwind v4 + shadcn-style UI + TanStack Table + F
 
 For a **plain-English summary of what was delivered**, a **suggested demo order**, **questions to ask**, and **what is not in scope**, see **[`CLIENT_MEETING.md`](./CLIENT_MEETING.md)**.
 
+## Deploy (Vercel + API)
+
+The UI is configured for **Vercel** (`client/vercel.json`, env `VITE_API_BASE_URL`). The Express API is deployed separately (e.g. Railway). Step-by-step instructions: **[`DEPLOY.md`](./DEPLOY.md)**.
+
 ## Prerequisites
 
 - Node 20+

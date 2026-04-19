@@ -11,12 +11,23 @@ const PORT = Number(process.env.PORT) || 4000;
 
 app.use(
   cors({
-    origin: process.env.CLIENT_ORIGIN?.split(",") ?? ["http://localhost:5173"],
+    origin: process.env.CLIENT_ORIGIN?.split(",").map((s) => s.trim()) ?? [
+      "http://localhost:5173",
+    ],
     credentials: true,
   })
 );
 app.use(compression());
 app.use(express.json({ limit: "1mb" }));
+
+// Root URL (browser default) — API lives under /api. Avoids "Cannot GET /" on Vercel.
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "ai-restaurant-api",
+    hint: "Use GET /api/health to verify the deployment.",
+  });
+});
 
 app.use("/api", apiRouter);
 
@@ -42,7 +53,10 @@ app.use(
   }
 );
 
-async function bootstrap() {
+/** Vercel sets this at build/runtime — do not call app.listen() there (platform handles it). */
+const isVercel = Boolean(process.env.VERCEL);
+
+async function startLocal() {
   try {
     await prisma.$connect();
     console.log("✓ Database connected");
@@ -60,4 +74,8 @@ async function bootstrap() {
   });
 }
 
-void bootstrap();
+if (!isVercel) {
+  void startLocal();
+}
+
+export default app;
