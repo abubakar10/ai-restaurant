@@ -7,6 +7,7 @@ export const qk = {
   recipes: ["recipes"] as const,
   suggestionsPo: ["suggestions", "po"] as const,
   menuItems: ["menu-items"] as const,
+  sales: ["sales"] as const,
 };
 
 export const queryClient = new QueryClient({

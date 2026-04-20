@@ -35,6 +35,58 @@ const patchIng = z.object({
   onHand: z.number().nonnegative(),
 });
 
+const createIng = z.object({
+  internalNumber: z.string().min(1),
+  name: z.string().min(1),
+  class: z.string().min(1),
+  type: z.string().min(1).default("Food"),
+  parLevel: z.number().nonnegative(),
+  onHand: z.number().nonnegative(),
+  inventoryUnit: z.enum(["KG", "EACH"]),
+  vendorName: z.string().nullable().optional(),
+  supplierSku: z.string().nullable().optional(),
+  minOrder: z.number().nonnegative().nullable().optional(),
+  unitCost: z.number().nonnegative().nullable().optional(),
+  orderPackAmount: z.number().nonnegative().nullable().optional(),
+  orderPackLabel: z.string().nullable().optional(),
+});
+
+apiRouter.post("/ingredients", async (req, res) => {
+  const parsed = createIng.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const d = parsed.data;
+    const created = await prisma.ingredient.create({
+      data: {
+        internalNumber: d.internalNumber.trim(),
+        name: d.name.trim(),
+        class: d.class.trim(),
+        type: d.type,
+        parLevel: new Decimal(d.parLevel),
+        onHand: new Decimal(d.onHand),
+        inventoryUnit: d.inventoryUnit,
+        vendorName: d.vendorName?.trim() || null,
+        supplierSku: d.supplierSku?.trim() || null,
+        minOrder: d.minOrder == null ? null : new Decimal(d.minOrder),
+        unitCost: d.unitCost == null ? null : new Decimal(d.unitCost),
+        orderPackAmount:
+          d.orderPackAmount == null ? null : new Decimal(d.orderPackAmount),
+        orderPackLabel: d.orderPackLabel?.trim() || null,
+      },
+    });
+    res.status(201).json(created);
+  } catch (e) {
+    const msg =
+      e instanceof Error && e.message.includes("Unique constraint")
+        ? "SKU already exists"
+        : "Failed to create ingredient";
+    res.status(400).json({ error: msg });
+  }
+});
+
 apiRouter.patch("/ingredients/:id", async (req, res) => {
   const parsed = patchIng.safeParse(req.body);
   if (!parsed.success) {
@@ -96,6 +148,50 @@ apiRouter.get("/recipes", async (_req, res) => {
 apiRouter.get("/suggestions/po", async (_req, res) => {
   const data = await buildPoSuggestions();
   res.json(data);
+});
+
+const approvePoBody = z.object({
+  lines: z
+    .array(
+      z.object({
+        ingredientId: z.string().uuid(),
+        name: z.string().min(1),
+        inventoryUnit: z.string().min(1),
+        approvedQty: z.number().nonnegative(),
+        unitCost: z.number().nonnegative().nullable(),
+        vendorName: z.string().nullable(),
+      })
+    )
+    .min(1),
+});
+
+apiRouter.post("/suggestions/po/approve", async (req, res) => {
+  const parsed = approvePoBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const totalEstimated = parsed.data.lines.reduce((sum, line) => {
+    if (line.unitCost == null) return sum;
+    return sum + line.approvedQty * line.unitCost;
+  }, 0);
+
+  const vendorCount = new Set(
+    parsed.data.lines.map((l) => l.vendorName).filter((v): v is string => Boolean(v))
+  ).size;
+
+  // Milestone 1 keeps this as a supervisor confirmation payload.
+  // Auth, supplier email dispatch, and persisted PO entities are planned next.
+  const poNumber = `PO-${Date.now().toString().slice(-6)}`;
+  res.status(201).json({
+    poNumber,
+    approvedAt: new Date().toISOString(),
+    lineCount: parsed.data.lines.length,
+    vendorCount,
+    totalEstimated: totalEstimated.toFixed(2),
+    status: "approved_for_supplier",
+  });
 });
 
 apiRouter.get("/dashboard", async (_req, res) => {
