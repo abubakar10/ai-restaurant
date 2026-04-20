@@ -6,6 +6,7 @@ export const qk = {
   ingredients: ["ingredients"] as const,
   recipes: ["recipes"] as const,
   suggestionsPo: ["suggestions", "po"] as const,
+  approvedPoLines: ["suggestions", "po", "approved"] as const,
   menuItems: ["menu-items"] as const,
   sales: ["sales"] as const,
 };

@@ -115,6 +115,7 @@ export function Dashboard() {
             icon: Package,
             hint: "SKU master",
             accent: "border-l-violet-500",
+            to: "/inventory",
           },
           {
             label: "Below PAR",
@@ -122,6 +123,7 @@ export function Dashboard() {
             icon: AlertTriangle,
             hint: "Below minimum target",
             accent: "border-l-amber-500",
+            to: "/inventory",
           },
           {
             label: "Sales entries",
@@ -129,6 +131,7 @@ export function Dashboard() {
             icon: TrendingUp,
             hint: "Recorded in system",
             accent: "border-l-emerald-500",
+            to: "/sales",
           },
           {
             label: "Menu SKUs",
@@ -136,14 +139,17 @@ export function Dashboard() {
             icon: Activity,
             hint: "POS-linked items",
             accent: "border-l-sky-500",
+            to: "/recipes",
           },
         ].map((s) => (
-          <div
+          <Link
             key={s.label}
+            to={s.to}
             className={cn(
               "rounded-xl border border-white/[0.07] bg-zinc-950/55 pl-4 pr-4 py-4 shadow-sm shadow-black/20",
               "border-l-4",
-              s.accent
+              s.accent,
+              "block transition-all hover:bg-white/[0.04] hover:shadow-violet-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60"
             )}
           >
             <div className="flex items-start justify-between gap-3">
@@ -160,7 +166,7 @@ export function Dashboard() {
                 <s.icon className="h-4 w-4 text-zinc-300" aria-hidden />
               </div>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
 

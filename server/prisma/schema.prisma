@@ -46,6 +46,7 @@ model Ingredient {
   orderPackAmount  Decimal?     @db.Decimal(14, 6)
   orderPackLabel   String?
   recipeLines      RecipeLine[]
+  poLines          PurchaseOrderLine[]
 }
 
 enum InventoryUnit {
@@ -82,4 +83,41 @@ model SalesEntry {
 
   @@index([menuItemId])
   @@index([soldAt])
+}
+
+model PurchaseOrder {
+  id         String              @id @default(uuid())
+  poNumber   String              @unique
+  status     PurchaseOrderStatus @default(APPROVED)
+  approvedAt DateTime            @default(now())
+  createdAt  DateTime            @default(now())
+  lines      PurchaseOrderLine[]
+
+  @@index([status])
+  @@index([approvedAt])
+}
+
+model PurchaseOrderLine {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  ingredientId    String
+  ingredient      Ingredient    @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  name            String
+  internalNumber  String
+  vendorName      String?
+  inventoryUnit   InventoryUnit
+  suggestedQty    Decimal       @db.Decimal(14, 6)
+  approvedQty     Decimal       @db.Decimal(14, 6)
+  unitCost        Decimal?      @db.Decimal(14, 4)
+  createdAt       DateTime      @default(now())
+
+  @@index([purchaseOrderId])
+  @@index([ingredientId])
+}
+
+enum PurchaseOrderStatus {
+  APPROVED
+  RECEIVED
+  CANCELLED
 }

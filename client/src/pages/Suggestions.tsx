@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock, Download, FileDown, Trash2, WandSparkles } from "lucide-react";
 import { api } from "../lib/api";
 import { downloadPoPdf } from "../lib/poPdf";
@@ -35,6 +35,19 @@ type PoRes = {
 };
 
 type DraftLine = Line & { approvedQty: string };
+type ApprovedLine = {
+  id: string;
+  ingredientId: string;
+  name: string;
+  internalNumber: string;
+  vendorName: string | null;
+  inventoryUnit: string;
+  suggestedQty: string;
+  approvedQty: string;
+  unitCost: string | null;
+  poNumber: string;
+  approvedAt: string;
+};
 
 type ApproveRes = {
   poNumber: string;
@@ -50,6 +63,7 @@ function priorityBadgeVariant(p: Line["priority"]) {
 }
 
 export function Suggestions() {
+  const queryClient = useQueryClient();
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
   const [hasGenerated, setHasGenerated] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -58,6 +72,10 @@ export function Suggestions() {
     queryKey: qk.suggestionsPo,
     queryFn: () => api<PoRes>("/suggestions/po"),
     enabled: false,
+  });
+  const { data: approvedLines = [] } = useQuery({
+    queryKey: qk.approvedPoLines,
+    queryFn: () => api<ApprovedLine[]>("/suggestions/po/approved"),
   });
 
   const approveMutation = useMutation({
@@ -68,7 +86,9 @@ export function Suggestions() {
           lines: draftLines.map((line) => ({
             ingredientId: line.ingredientId,
             name: line.name,
+            internalNumber: line.internalNumber,
             inventoryUnit: line.inventoryUnit,
+            suggestedQty: Number(line.suggestedOrderQty || 0),
             approvedQty: Number(line.approvedQty || 0),
             unitCost: line.unitCost == null ? null : Number(line.unitCost),
             vendorName: line.vendorName ?? null,
@@ -100,6 +120,8 @@ export function Suggestions() {
       setMessage(
         `PO ${res.poNumber} approved with ${res.lineCount} lines across ${res.vendorCount} vendor(s). Estimated total ${res.totalEstimated}. Approved ${approvedAt}.`
       );
+      setDraftLines([]);
+      void queryClient.invalidateQueries({ queryKey: qk.approvedPoLines });
     },
   });
 
@@ -165,26 +187,51 @@ export function Suggestions() {
     });
   };
 
-  const downloadSingleLinePo = (line: DraftLine) => {
+  const downloadSingleLinePo = async (line: DraftLine) => {
     if (Number(line.approvedQty) <= 0) {
       setMessage("Approved quantity must be greater than zero to generate a PO PDF.");
       return;
     }
-    downloadPoPdf({
-      poNumber: `PO-${line.internalNumber}-${Date.now().toString().slice(-4)}`,
-      title: "Single Item Purchase Order",
-      lines: [
-        {
-          sku: line.internalNumber,
-          ingredient: line.name,
-          vendor: line.vendorName,
-          suggestedQty: line.suggestedOrderQty,
-          approvedQty: line.approvedQty,
-          unit: line.inventoryUnit,
-          unitCost: line.unitCost,
-        },
-      ],
-    });
+    try {
+      const res = await api<ApproveRes>("/suggestions/po/approve", {
+        method: "POST",
+        body: JSON.stringify({
+          lines: [
+            {
+              ingredientId: line.ingredientId,
+              name: line.name,
+              internalNumber: line.internalNumber,
+              inventoryUnit: line.inventoryUnit,
+              suggestedQty: Number(line.suggestedOrderQty || 0),
+              approvedQty: Number(line.approvedQty),
+              unitCost: line.unitCost == null ? null : Number(line.unitCost),
+              vendorName: line.vendorName ?? null,
+            },
+          ],
+        }),
+      });
+      downloadPoPdf({
+        poNumber: res.poNumber,
+        approvedAt: res.approvedAt,
+        title: "Single Item Purchase Order",
+        lines: [
+          {
+            sku: line.internalNumber,
+            ingredient: line.name,
+            vendor: line.vendorName,
+            suggestedQty: line.suggestedOrderQty,
+            approvedQty: line.approvedQty,
+            unit: line.inventoryUnit,
+            unitCost: line.unitCost,
+          },
+        ],
+      });
+      setDraftLines((prev) => prev.filter((l) => l.ingredientId !== line.ingredientId));
+      setMessage(`${line.name} moved to Approved after PO generation.`);
+      void queryClient.invalidateQueries({ queryKey: qk.approvedPoLines });
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Failed to generate PO.");
+    }
   };
 
   const err = error instanceof Error ? error.message : null;
@@ -493,6 +540,56 @@ export function Suggestions() {
           </>
         )}
       </Card>
+      {approvedLines.length > 0 && (
+        <Card className="overflow-hidden p-0">
+          <div className="border-b border-white/[0.07] px-5 py-4">
+            <CardHeader className="p-0">
+              <CardTitle className="text-base">Approved order lines</CardTitle>
+              <CardDescription>
+                Lines generated as PO are removed from draft and listed here.
+              </CardDescription>
+            </CardHeader>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-white/[0.06] bg-white/[0.02] text-[11px] font-semibold uppercase tracking-wider text-muted">
+                  <th className="px-4 py-2.5 font-medium">PO #</th>
+                  <th className="px-4 py-2.5 font-medium">SKU</th>
+                  <th className="px-4 py-2.5 font-medium">Ingredient</th>
+                  <th className="px-4 py-2.5 font-medium">Vendor</th>
+                  <th className="px-4 py-2.5 font-medium">Approved qty</th>
+                  <th className="px-4 py-2.5 font-medium">Unit</th>
+                  <th className="px-4 py-2.5 font-medium">Approved at</th>
+                </tr>
+              </thead>
+              <tbody>
+                {approvedLines.map((line) => (
+                  <tr
+                    key={`${line.ingredientId}-${line.poNumber}-${line.approvedAt}`}
+                    className="border-b border-white/[0.04] transition-colors hover:bg-white/[0.03]"
+                  >
+                    <td className="px-4 py-2.5 font-mono text-xs text-zinc-300">{line.poNumber}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-zinc-300">
+                      {line.internalNumber}
+                    </td>
+                    <td className="px-4 py-2.5">{line.name}</td>
+                    <td className="px-4 py-2.5">{line.vendorName ?? "—"}</td>
+                    <td className="px-4 py-2.5 font-mono tabular-nums">{line.approvedQty}</td>
+                    <td className="px-4 py-2.5">{line.inventoryUnit}</td>
+                    <td className="px-4 py-2.5 text-xs text-zinc-300">
+                      {new Intl.DateTimeFormat(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      }).format(new Date(line.approvedAt))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

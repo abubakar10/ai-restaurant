@@ -5,6 +5,11 @@ import { consumptionAmount } from "./units.js";
 const DAYS_LOOKBACK = 14;
 const FORECAST_DAYS = 3;
 
+function isMissingTableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes("does not exist") || error.message.includes("P2021");
+}
+
 function roundUpToMinOrder(
   need: Decimal,
   minOrder: Decimal | null,
@@ -70,6 +75,24 @@ export async function buildPoSuggestions() {
     },
   });
 
+  let openPoLines: { ingredientId: string; approvedQty: Decimal }[] = [];
+  try {
+    openPoLines = await prisma.purchaseOrderLine.findMany({
+      where: { purchaseOrder: { status: "APPROVED" } },
+      select: { ingredientId: true, approvedQty: true },
+    });
+  } catch (error) {
+    // Backward compatibility: if PO tables are not migrated yet, continue with classic suggestion logic.
+    if (!isMissingTableError(error)) {
+      throw error;
+    }
+  }
+  const approvedOutstandingByIngredient = new Map<string, Decimal>();
+  for (const line of openPoLines) {
+    const prev = approvedOutstandingByIngredient.get(line.ingredientId) ?? new Decimal(0);
+    approvedOutstandingByIngredient.set(line.ingredientId, prev.add(line.approvedQty));
+  }
+
   const lines: {
     ingredientId: string;
     name: string;
@@ -106,15 +129,20 @@ export async function buildPoSuggestions() {
     const needForPar = Decimal.max(new Decimal(0), gapPar);
     const needForForecast = forecastUse;
     const rawNeed = needForPar.add(needForForecast);
+    const outstandingApproved =
+      approvedOutstandingByIngredient.get(ing.id) ?? new Decimal(0);
+    const netNeed = Decimal.max(new Decimal(0), rawNeed.sub(outstandingApproved));
 
     const suggested = roundUpToMinOrder(
-      rawNeed,
+      netNeed,
       ing.minOrder,
       ing.orderPackAmount
     );
 
     let reason: string;
-    if (on.lt(par)) {
+    if (outstandingApproved.gt(0) && netNeed.lte(0)) {
+      reason = `Covered by approved PO qty ${outstandingApproved.toFixed(2)}.`;
+    } else if (on.lt(par)) {
       reason = `Below PAR (${on.toFixed(2)} < ${par.toFixed(2)}).`;
     } else if (needForForecast.gt(0)) {
       reason = `Forecast covers ~${FORECAST_DAYS}d of sales from last ${DAYS_LOOKBACK}d history.`;
@@ -123,7 +151,7 @@ export async function buildPoSuggestions() {
     }
 
     let priority: "high" | "medium" | "low" = "low";
-    if (on.lt(par)) priority = "high";
+    if (on.lt(par) && netNeed.gt(0)) priority = "high";
     else if (needForForecast.gt(0)) priority = "medium";
 
     lines.push({

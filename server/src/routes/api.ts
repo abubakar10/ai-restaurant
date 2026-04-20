@@ -7,6 +7,11 @@ import { Decimal } from "@prisma/client/runtime/library";
 
 export const apiRouter = Router();
 
+function isMissingTableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes("does not exist") || error.message.includes("P2021");
+}
+
 apiRouter.get("/health", (_req, res) => {
   res.json({ ok: true, service: "ai-restaurant-api" });
 });
@@ -156,7 +161,9 @@ const approvePoBody = z.object({
       z.object({
         ingredientId: z.string().uuid(),
         name: z.string().min(1),
+        internalNumber: z.string().min(1),
         inventoryUnit: z.string().min(1),
+        suggestedQty: z.number().nonnegative(),
         approvedQty: z.number().nonnegative(),
         unitCost: z.number().nonnegative().nullable(),
         vendorName: z.string().nullable(),
@@ -181,17 +188,83 @@ apiRouter.post("/suggestions/po/approve", async (req, res) => {
     parsed.data.lines.map((l) => l.vendorName).filter((v): v is string => Boolean(v))
   ).size;
 
-  // Milestone 1 keeps this as a supervisor confirmation payload.
-  // Auth, supplier email dispatch, and persisted PO entities are planned next.
   const poNumber = `PO-${Date.now().toString().slice(-6)}`;
+  const approvedAt = new Date().toISOString();
+  let lineCount = parsed.data.lines.filter((line) => line.approvedQty > 0).length;
+  try {
+    const po = await prisma.purchaseOrder.create({
+      data: {
+        poNumber,
+        approvedAt,
+        status: "APPROVED",
+        lines: {
+          create: parsed.data.lines
+            .filter((line) => line.approvedQty > 0)
+            .map((line) => ({
+              ingredientId: line.ingredientId,
+              name: line.name,
+              internalNumber: line.internalNumber,
+              vendorName: line.vendorName,
+              inventoryUnit: line.inventoryUnit === "KG" ? "KG" : "EACH",
+              suggestedQty: new Decimal(line.suggestedQty),
+              approvedQty: new Decimal(line.approvedQty),
+              unitCost: line.unitCost == null ? null : new Decimal(line.unitCost),
+            })),
+        },
+      },
+      include: { lines: true },
+    });
+    lineCount = po.lines.length;
+  } catch (error) {
+    // Backward compatibility before PO table migration is applied.
+    if (!isMissingTableError(error)) {
+      throw error;
+    }
+  }
+
   res.status(201).json({
     poNumber,
-    approvedAt: new Date().toISOString(),
-    lineCount: parsed.data.lines.length,
+    approvedAt,
+    lineCount,
     vendorCount,
     totalEstimated: totalEstimated.toFixed(2),
     status: "approved_for_supplier",
   });
+});
+
+apiRouter.get("/suggestions/po/approved", async (_req, res) => {
+  try {
+    const rows = await prisma.purchaseOrderLine.findMany({
+      where: { purchaseOrder: { status: "APPROVED" } },
+      include: {
+        purchaseOrder: {
+          select: { poNumber: true, approvedAt: true },
+        },
+      },
+      orderBy: [{ purchaseOrder: { approvedAt: "desc" } }, { createdAt: "desc" }],
+    });
+    res.json(
+      rows.map((line) => ({
+        id: line.id,
+        ingredientId: line.ingredientId,
+        name: line.name,
+        internalNumber: line.internalNumber,
+        vendorName: line.vendorName,
+        inventoryUnit: line.inventoryUnit,
+        suggestedQty: line.suggestedQty.toString(),
+        approvedQty: line.approvedQty.toString(),
+        unitCost: line.unitCost?.toString() ?? null,
+        poNumber: line.purchaseOrder.poNumber,
+        approvedAt: line.purchaseOrder.approvedAt.toISOString(),
+      }))
+    );
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      res.json([]);
+      return;
+    }
+    throw error;
+  }
 });
 
 apiRouter.get("/dashboard", async (_req, res) => {
