@@ -8,7 +8,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "glass-panel rounded-2xl p-6 text-left text-foreground",
+        "glass-panel relative overflow-hidden rounded-2xl p-6 text-left text-foreground",
         className
       )}
       {...props}

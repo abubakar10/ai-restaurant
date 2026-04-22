@@ -49,9 +49,9 @@ function enrichWatchlist(
 }
 
 function riskLabel(pct: number): { label: string; className: string } {
-  if (pct < 40) return { label: "Critical", className: "bg-rose-500/15 text-rose-200 ring-rose-500/30" };
-  if (pct < 65) return { label: "High", className: "bg-amber-500/15 text-amber-200 ring-amber-500/30" };
-  return { label: "Reorder", className: "bg-sky-500/12 text-sky-200 ring-sky-500/25" };
+  if (pct < 40) return { label: "Critical", className: "risk-chip risk-chip-critical" };
+  if (pct < 65) return { label: "High", className: "risk-chip risk-chip-high" };
+  return { label: "Reorder", className: "risk-chip risk-chip-reorder" };
 }
 
 export function Dashboard() {
@@ -84,7 +84,7 @@ export function Dashboard() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="dashboard-page space-y-6">
       <PageHeader
         eyebrow="Operations"
         title="Inventory control center"
@@ -114,7 +114,7 @@ export function Dashboard() {
             value: stats?.ingredients ?? "—",
             icon: Package,
             hint: "SKU master",
-            accent: "border-l-violet-500",
+            accent: "from-violet-500 to-fuchsia-500",
             to: "/inventory",
           },
           {
@@ -122,7 +122,7 @@ export function Dashboard() {
             value: stats?.belowPar ?? "—",
             icon: AlertTriangle,
             hint: "Below minimum target",
-            accent: "border-l-amber-500",
+            accent: "from-amber-500 to-orange-500",
             to: "/inventory",
           },
           {
@@ -130,7 +130,7 @@ export function Dashboard() {
             value: stats?.salesEntries ?? "—",
             icon: TrendingUp,
             hint: "Recorded in system",
-            accent: "border-l-emerald-500",
+            accent: "from-emerald-500 to-cyan-500",
             to: "/sales",
           },
           {
@@ -138,7 +138,7 @@ export function Dashboard() {
             value: stats?.menuItems ?? "—",
             icon: Activity,
             hint: "POS-linked items",
-            accent: "border-l-sky-500",
+            accent: "from-sky-500 to-indigo-500",
             to: "/recipes",
           },
         ].map((s) => (
@@ -146,18 +146,23 @@ export function Dashboard() {
             key={s.label}
             to={s.to}
             className={cn(
-              "rounded-xl border border-white/[0.07] bg-zinc-950/55 pl-4 pr-4 py-4 shadow-sm shadow-black/20",
-              "border-l-4",
-              s.accent,
+              "relative overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/55 pl-4 pr-4 py-4 shadow-sm shadow-black/20",
               "block transition-all hover:bg-white/[0.04] hover:shadow-violet-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60"
             )}
           >
+            <span
+              className={cn(
+                "absolute inset-y-0 left-0 w-1 bg-gradient-to-b",
+                s.accent
+              )}
+              aria-hidden
+            />
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
                   {s.label}
                 </p>
-                <p className="mt-1.5 font-display text-2xl font-semibold tabular-nums text-white">
+                <p className="mt-1.5 font-display text-2xl font-semibold tabular-nums text-foreground">
                   {isPending ? "—" : s.value}
                 </p>
                 <p className="mt-1 text-[11px] text-muted">{s.hint}</p>
@@ -242,7 +247,7 @@ export function Dashboard() {
                       </div>
                       <div className="mt-3 flex items-center justify-between border-t border-white/[0.08] pt-3 text-sm">
                         <span className="text-muted">Shortfall</span>
-                        <span className="tabular-nums text-amber-200/90">
+                        <span className="shortfall-value tabular-nums">
                           {row.shortfall.toLocaleString(undefined, {
                             maximumFractionDigits: 2,
                           })}
@@ -297,7 +302,7 @@ export function Dashboard() {
                             </span>
                           </div>
                         </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums text-amber-200/90">
+                        <td className="shortfall-value px-4 py-2.5 text-right tabular-nums">
                           {row.shortfall.toLocaleString(undefined, {
                             maximumFractionDigits: 2,
                           })}
@@ -305,7 +310,7 @@ export function Dashboard() {
                         <td className="px-4 py-2.5">
                           <span
                             className={cn(
-                              "inline-flex rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+                              "inline-flex rounded-md px-2 py-0.5 text-[11px] font-medium",
                               risk.className
                             )}
                           >

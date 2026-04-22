@@ -45,14 +45,14 @@ export function DarkSelect({
   }, []);
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="dark-select relative">
       <button
         type="button"
         id={id}
         disabled={disabled}
         onClick={() => !disabled && setOpen((o) => !o)}
         className={cn(
-          "flex h-11 w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#14101f]/95 px-4 text-left text-sm text-zinc-100 shadow-inner backdrop-blur-sm transition-colors",
+          "dark-select-trigger flex h-11 w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#14101f]/95 px-4 text-left text-sm text-zinc-100 shadow-inner backdrop-blur-sm transition-colors",
           "hover:border-white/18 focus:border-violet-400/50 focus:outline-none focus:ring-2 focus:ring-violet-500/35",
           disabled && "cursor-not-allowed opacity-50"
         )}
@@ -77,7 +77,7 @@ export function DarkSelect({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.15 }}
-            className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-white/12 bg-[#1a1628] py-1 shadow-[0_16px_48px_rgba(0,0,0,0.55)] ring-1 ring-white/5"
+            className="dark-select-menu absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-white/12 bg-[#1a1628] py-1 shadow-[0_16px_48px_rgba(0,0,0,0.55)] ring-1 ring-white/5"
             role="listbox"
           >
             {options.map((opt) => {
@@ -87,9 +87,9 @@ export function DarkSelect({
                   <button
                     type="button"
                     className={cn(
-                      "flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-sm text-zinc-100 transition-colors",
+                      "dark-select-option flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-sm text-zinc-100 transition-colors",
                       active
-                        ? "bg-violet-600/25 text-white"
+                        ? "dark-select-option-active bg-violet-600/25 text-white"
                         : "hover:bg-white/[0.08]"
                     )}
                     onClick={() => {

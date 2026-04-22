@@ -473,7 +473,7 @@ export function Inventory() {
                   <select
                     value={form.inventoryUnit}
                     onChange={(e) => onFormChange("inventoryUnit", e.target.value as "KG" | "EACH")}
-                    className="h-11 w-full rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm text-foreground"
+                    className="inventory-select h-11 w-full rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm text-foreground"
                   >
                     <option value="KG">KG</option>
                     <option value="EACH">EACH</option>

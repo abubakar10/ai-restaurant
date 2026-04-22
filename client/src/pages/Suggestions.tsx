@@ -437,10 +437,11 @@ export function Suggestions() {
                     <span className="font-mono text-[10px] text-zinc-500">Rationale · </span>
                     {line.reason}
                   </div>
-                  <div className="mt-3 flex justify-end gap-2">
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
                     <Button
                       variant="secondary"
                       size="sm"
+                      className="w-full sm:w-auto"
                       onClick={() => downloadSingleLinePo(line)}
                     >
                       <FileDown className="h-4 w-4" aria-hidden />
@@ -449,7 +450,7 @@ export function Suggestions() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="text-rose-300 hover:text-rose-200"
+                      className="po-delete-action w-full sm:w-auto text-rose-300 hover:text-rose-200"
                       onClick={() => deleteLine(line.ingredientId)}
                     >
                       <Trash2 className="h-4 w-4" aria-hidden />
@@ -524,7 +525,7 @@ export function Suggestions() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="text-rose-300 hover:text-rose-200"
+                          className="po-delete-action text-rose-300 hover:text-rose-200"
                           onClick={() => deleteLine(line.ingredientId)}
                         >
                           <Trash2 className="h-4 w-4" aria-hidden />
@@ -550,7 +551,50 @@ export function Suggestions() {
               </CardDescription>
             </CardHeader>
           </div>
-          <div className="overflow-x-auto">
+          <div className="space-y-3 px-4 pb-5 pt-3 lg:hidden">
+            {approvedLines.map((line) => (
+              <div
+                key={`${line.ingredientId}-${line.poNumber}-${line.approvedAt}`}
+                className="rounded-xl border border-white/[0.1] bg-zinc-950/50 p-4 shadow-sm shadow-black/20"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-muted">
+                      PO {line.poNumber}
+                    </p>
+                    <p className="mt-1 font-medium leading-snug text-foreground">{line.name}</p>
+                    <p className="mt-1 text-xs text-muted">{line.vendorName ?? "Vendor —"}</p>
+                  </div>
+                  <span className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
+                    Approved
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-3 border-t border-white/[0.08] pt-3 text-sm">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">SKU</p>
+                    <p className="mt-1 font-mono text-xs text-zinc-300">{line.internalNumber}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                      Approved qty
+                    </p>
+                    <p className="mt-1 font-mono tabular-nums text-foreground">
+                      {line.approvedQty}{" "}
+                      <span className="font-sans text-xs text-muted">{line.inventoryUnit}</span>
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-3 text-[11px] text-muted">
+                  Approved{" "}
+                  {new Intl.DateTimeFormat(undefined, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  }).format(new Date(line.approvedAt))}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto lg:block">
             <table className="w-full min-w-[900px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/[0.06] bg-white/[0.02] text-[11px] font-semibold uppercase tracking-wider text-muted">
