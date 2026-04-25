@@ -4,6 +4,7 @@ import { prisma } from "../prisma.js";
 import { recordSale } from "../lib/salesService.js";
 import { buildPoSuggestions } from "../lib/suggestions.js";
 import { Decimal } from "@prisma/client/runtime/library";
+import { sendApprovedPoEmail } from "../lib/mailer.js";
 
 export const apiRouter = Router();
 
@@ -190,7 +191,8 @@ apiRouter.post("/suggestions/po/approve", async (req, res) => {
 
   const poNumber = `PO-${Date.now().toString().slice(-6)}`;
   const approvedAt = new Date().toISOString();
-  let lineCount = parsed.data.lines.filter((line) => line.approvedQty > 0).length;
+  const approvedLines = parsed.data.lines.filter((line) => line.approvedQty > 0);
+  let lineCount = approvedLines.length;
   try {
     const po = await prisma.purchaseOrder.create({
       data: {
@@ -198,9 +200,7 @@ apiRouter.post("/suggestions/po/approve", async (req, res) => {
         approvedAt,
         status: "APPROVED",
         lines: {
-          create: parsed.data.lines
-            .filter((line) => line.approvedQty > 0)
-            .map((line) => ({
+          create: approvedLines.map((line) => ({
               ingredientId: line.ingredientId,
               name: line.name,
               internalNumber: line.internalNumber,
@@ -222,6 +222,20 @@ apiRouter.post("/suggestions/po/approve", async (req, res) => {
     }
   }
 
+  const emailResult = await sendApprovedPoEmail({
+    poNumber,
+    approvedAtIso: approvedAt,
+    totalEstimated,
+    lines: approvedLines.map((line) => ({
+      sku: line.internalNumber,
+      name: line.name,
+      vendorName: line.vendorName,
+      qty: line.approvedQty,
+      unit: line.inventoryUnit,
+      unitCost: line.unitCost,
+    })),
+  });
+
   res.status(201).json({
     poNumber,
     approvedAt,
@@ -229,6 +243,12 @@ apiRouter.post("/suggestions/po/approve", async (req, res) => {
     vendorCount,
     totalEstimated: totalEstimated.toFixed(2),
     status: "approved_for_supplier",
+    email: {
+      sent: emailResult.sent,
+      to: emailResult.to,
+      mode: emailResult.mode,
+      error: emailResult.error ?? null,
+    },
   });
 });
 

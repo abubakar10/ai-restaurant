@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Clock, Download, FileDown, Trash2, WandSparkles } from "lucide-react";
+import { CheckCircle2, Clock, Download, ThumbsDown, WandSparkles } from "lucide-react";
 import { api } from "../lib/api";
 import { downloadPoPdf } from "../lib/poPdf";
 import { qk } from "../lib/queryClient";
@@ -14,16 +14,26 @@ type Line = {
   ingredientId: string;
   name: string;
   internalNumber: string;
+  supplierCode: string | null;
+  supplierEmail: string | null;
+  supplierKind: string | null;
   vendorName: string | null;
   supplierSku: string | null;
   unitCost: string | null;
   inventoryUnit: string;
   onHand: string;
   parLevel: string;
+  leadTimeBusinessDays: number;
+  forecastDemand: string;
+  mapePct: string;
+  safetyStock: string;
+  openPoQty: string;
+  recommendedRaw: string;
+  possibleQty: string;
   gapVsPar: string;
-  forecastedUse: string;
   suggestedOrderQty: string;
   reason: string;
+  aiNote: string;
   priority: "high" | "medium" | "low";
 };
 
@@ -31,10 +41,12 @@ type PoRes = {
   generatedAt: string;
   forecastWindowDays: number;
   forecastHorizonDays: number;
+  forecastHorizonNote?: string;
+  engine?: string;
   lines: Line[];
 };
 
-type DraftLine = Line & { approvedQty: string };
+type DraftLine = Line & { approvedQty: string; disapproved?: boolean };
 type ApprovedLine = {
   id: string;
   ingredientId: string;
@@ -56,6 +68,12 @@ type ApproveRes = {
   vendorCount: number;
   totalEstimated: string;
   status: string;
+  email?: {
+    sent: boolean;
+    to: string;
+    mode: "smtp" | "simulated";
+    error?: string | null;
+  };
 };
 
 function priorityBadgeVariant(p: Line["priority"]) {
@@ -67,6 +85,8 @@ export function Suggestions() {
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
   const [hasGenerated, setHasGenerated] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data, error, dataUpdatedAt, isFetching, refetch, isRefetching } = useQuery({
     queryKey: qk.suggestionsPo,
@@ -83,7 +103,9 @@ export function Suggestions() {
       api<ApproveRes>("/suggestions/po/approve", {
         method: "POST",
         body: JSON.stringify({
-          lines: draftLines.map((line) => ({
+          lines: draftLines
+            .filter((line) => !line.disapproved)
+            .map((line) => ({
             ingredientId: line.ingredientId,
             name: line.name,
             internalNumber: line.internalNumber,
@@ -92,7 +114,7 @@ export function Suggestions() {
             approvedQty: Number(line.approvedQty || 0),
             unitCost: line.unitCost == null ? null : Number(line.unitCost),
             vendorName: line.vendorName ?? null,
-          })),
+            })),
         }),
       }),
     onSuccess: (res) => {
@@ -117,8 +139,13 @@ export function Suggestions() {
         dateStyle: "medium",
         timeStyle: "short",
       }).format(new Date(res.approvedAt));
+      const emailLine = res.email
+        ? res.email.sent
+          ? ` Email sent to ${res.email.to}.`
+          : ` Email not sent (${res.email.mode}); target ${res.email.to}${res.email.error ? `: ${res.email.error}` : "."}`
+        : "";
       setMessage(
-        `PO ${res.poNumber} approved with ${res.lineCount} lines across ${res.vendorCount} vendor(s). Estimated total ${res.totalEstimated}. Approved ${approvedAt}.`
+        `PO ${res.poNumber} approved with ${res.lineCount} lines across ${res.vendorCount} vendor(s). Estimated total ${res.totalEstimated}. Approved ${approvedAt}.${emailLine}`
       );
       setDraftLines([]);
       void queryClient.invalidateQueries({ queryKey: qk.approvedPoLines });
@@ -131,6 +158,7 @@ export function Suggestions() {
       data.lines.map((line) => ({
         ...line,
         approvedQty: line.suggestedOrderQty,
+        disapproved: false,
       }))
     );
     setMessage(null);
@@ -150,8 +178,16 @@ export function Suggestions() {
     );
   };
 
-  const deleteLine = (ingredientId: string) => {
-    setDraftLines((prev) => prev.filter((line) => line.ingredientId !== ingredientId));
+  const disapproveLine = (ingredientId: string) => {
+    setDraftLines((prev) =>
+      prev.map((line) =>
+        line.ingredientId === ingredientId ? { ...line, disapproved: true, approvedQty: "0" } : line
+      )
+    );
+  };
+
+  const runSearch = () => {
+    setSearchQuery(searchInput.trim().toLowerCase());
   };
 
   const totalEstimate = useMemo(() => {
@@ -187,9 +223,9 @@ export function Suggestions() {
     });
   };
 
-  const downloadSingleLinePo = async (line: DraftLine) => {
+  const approveSingleLine = async (line: DraftLine) => {
     if (Number(line.approvedQty) <= 0) {
-      setMessage("Approved quantity must be greater than zero to generate a PO PDF.");
+      setMessage("Approved quantity must be greater than zero.");
       return;
     }
     try {
@@ -210,27 +246,16 @@ export function Suggestions() {
           ],
         }),
       });
-      downloadPoPdf({
-        poNumber: res.poNumber,
-        approvedAt: res.approvedAt,
-        title: "Single Item Purchase Order",
-        lines: [
-          {
-            sku: line.internalNumber,
-            ingredient: line.name,
-            vendor: line.vendorName,
-            suggestedQty: line.suggestedOrderQty,
-            approvedQty: line.approvedQty,
-            unit: line.inventoryUnit,
-            unitCost: line.unitCost,
-          },
-        ],
-      });
       setDraftLines((prev) => prev.filter((l) => l.ingredientId !== line.ingredientId));
-      setMessage(`${line.name} moved to Approved after PO generation.`);
+      const emailLine = res.email
+        ? res.email.sent
+          ? ` Email sent to ${res.email.to}.`
+          : ` Email not sent (${res.email.mode}); target ${res.email.to}${res.email.error ? `: ${res.email.error}` : "."}`
+        : "";
+      setMessage(`${line.name} moved to Approved.${emailLine}`);
       void queryClient.invalidateQueries({ queryKey: qk.approvedPoLines });
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Failed to generate PO.");
+      setMessage(e instanceof Error ? e.message : "Failed to approve.");
     }
   };
 
@@ -251,12 +276,37 @@ export function Suggestions() {
       }).format(new Date(data.generatedAt))
     : null;
 
+  const filteredDraftLines = useMemo(() => {
+    if (!searchQuery) return draftLines;
+    return draftLines.filter((line) => {
+      const haystack = [
+        line.internalNumber,
+        line.name,
+        line.vendorName ?? "",
+        line.supplierCode ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(searchQuery);
+    });
+  }, [draftLines, searchQuery]);
+
+  const filteredApprovedLines = useMemo(() => {
+    if (!searchQuery) return approvedLines;
+    return approvedLines.filter((line) => {
+      const haystack = [line.internalNumber, line.name, line.vendorName ?? "", line.poNumber]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(searchQuery);
+    });
+  }, [approvedLines, searchQuery]);
+
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Procurement"
         title="AI purchase suggestions"
-        description="Supervisor mode: generate AI recommendations, edit quantities, remove lines, then approve the PO draft for supplier handoff."
+        description="Milestone 2: forecast + MAPE safety over supplier lead time (business days, weekends excluded), open PO netting, supplier-feasible “Possible” qty, supervisor edit, then approve."
         meta={
           <div className="flex flex-col items-stretch gap-2 sm:items-end">
             <div className="flex items-center justify-end gap-2">
@@ -280,8 +330,15 @@ export function Suggestions() {
                 </span>
                 <span className="text-foreground">{generatedStr}</span>
                 <span className="mt-1 block text-[11px] text-zinc-500">
-                  Window {data.forecastWindowDays}d · horizon {data.forecastHorizonDays}d
+                  Sales lookback {data.forecastWindowDays}d · lead default{" "}
+                  {data.forecastHorizonDays} business day(s)
+                  {data.engine ? ` · ${data.engine}` : ""}
                 </span>
+                {data.forecastHorizonNote && (
+                  <span className="mt-1 block text-[11px] leading-snug text-zinc-500">
+                    {data.forecastHorizonNote}
+                  </span>
+                )}
               </div>
             )}
             <div className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-zinc-950/50 px-3 py-2 text-xs text-muted">
@@ -318,8 +375,8 @@ export function Suggestions() {
                 Estimate means cost estimate: line estimate = approved qty x est. unit
                 cost, draft estimate = sum of all lines.
               </span>
-              <span className="mt-1 block lg:hidden">
-                On smaller screens, each line is shown as a card.
+              <span className="mt-1 block">
+                This view uses simple cards to avoid horizontal scrolling.
               </span>
             </CardDescription>
           </CardHeader>
@@ -341,7 +398,7 @@ export function Suggestions() {
           <>
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] bg-white/[0.015] px-4 py-3 text-xs text-muted lg:px-5">
               <div>
-                <span className="font-semibold text-zinc-300">{draftLines.length}</span> line(s) in
+                <span className="font-semibold text-zinc-300">{filteredDraftLines.length}</span> line(s) in
                 draft · est. total{" "}
                 <span className="font-semibold text-zinc-300">
                   {Number.isFinite(totalEstimate) ? totalEstimate.toFixed(2) : "—"}
@@ -351,11 +408,25 @@ export function Suggestions() {
                 </span>
               </div>
               <div className="flex flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") runSearch();
+                    }}
+                    placeholder="Search SKU, item, vendor..."
+                    className="h-9 w-56"
+                  />
+                  <Button size="sm" variant="secondary" onClick={runSearch}>
+                    Search
+                  </Button>
+                </div>
                 <Button
                   size="sm"
                   variant="secondary"
                   onClick={downloadFullDraftPo}
-                  disabled={draftLines.length === 0}
+                  disabled={filteredDraftLines.length === 0}
                 >
                   <Download className="h-4 w-4" aria-hidden />
                   Download draft PDF
@@ -363,7 +434,9 @@ export function Suggestions() {
                 <Button
                   size="sm"
                   onClick={() => approveMutation.mutate()}
-                  disabled={draftLines.length === 0 || hasInvalidQty || approveMutation.isPending}
+                  disabled={
+                    filteredDraftLines.length === 0 || hasInvalidQty || approveMutation.isPending
+                  }
                 >
                   <CheckCircle2 className="h-4 w-4" aria-hidden />
                   {approveMutation.isPending ? "Approving..." : "Approve PO draft"}
@@ -389,11 +462,13 @@ export function Suggestions() {
               </p>
             )}
 
-            <div className="space-y-3 px-4 pb-5 pt-2 lg:hidden">
-              {draftLines.map((line) => (
+            <div className="grid grid-cols-1 gap-3 px-4 pb-5 pt-2 md:grid-cols-2 xl:grid-cols-3">
+              {filteredDraftLines.map((line) => (
                 <div
                   key={line.ingredientId}
-                  className="rounded-xl border border-white/[0.1] bg-zinc-950/50 p-4 shadow-sm shadow-black/20"
+                  className={`rounded-xl border border-white/[0.1] bg-zinc-950/50 p-4 shadow-sm shadow-black/20 ${
+                    line.disapproved ? "opacity-45 grayscale" : ""
+                  }`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <Badge
@@ -406,12 +481,32 @@ export function Suggestions() {
                   </div>
                   <p className="mt-2 font-medium leading-snug text-foreground">{line.name}</p>
                   <p className="mt-1 text-xs text-muted">
-                    {line.vendorName ?? "Vendor —"}
+                    {line.vendorName ?? "Vendor —"}{" "}
+                    {line.supplierCode ? (
+                      <span className="font-mono text-zinc-500"> · {line.supplierCode}</span>
+                    ) : null}
                   </p>
+                  {line.supplierEmail && (
+                    <p className="mt-0.5 text-[10px] text-zinc-500">{line.supplierEmail}</p>
+                  )}
+                  <div className="mt-3 grid grid-cols-2 gap-2 border-t border-white/[0.08] pt-3 text-[11px] text-muted">
+                    <div>Forecast ({line.leadTimeBusinessDays}bd)</div>
+                    <div className="font-mono text-foreground">{line.forecastDemand}</div>
+                    <div>MAPE</div>
+                    <div className="font-mono text-foreground">{line.mapePct}%</div>
+                    <div>Safety</div>
+                    <div className="font-mono text-foreground">{line.safetyStock}</div>
+                    <div>Open PO</div>
+                    <div className="font-mono text-foreground">{line.openPoQty}</div>
+                    <div>Rec (raw)</div>
+                    <div className="font-mono text-foreground">{line.recommendedRaw}</div>
+                    <div>Possible</div>
+                    <div className="font-mono text-emerald-200/90">{line.possibleQty}</div>
+                  </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 border-t border-white/[0.08] pt-3 text-sm">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-                        Suggested qty
+                        Possible (AI)
                       </p>
                       <p className="mt-0.5 font-mono text-base tabular-nums text-zinc-100">
                         {line.suggestedOrderQty}{" "}
@@ -420,7 +515,7 @@ export function Suggestions() {
                     </div>
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-                        Approved qty
+                        Supervisor qty
                       </p>
                       <Input
                         type="number"
@@ -429,12 +524,17 @@ export function Suggestions() {
                         value={line.approvedQty}
                         onChange={(e) => updateApprovedQty(line.ingredientId, e.target.value)}
                         className="mt-1 h-9"
+                        disabled={line.disapproved}
                       />
                       <p className="mt-1 text-[10px] text-muted">{line.inventoryUnit}</p>
                     </div>
                   </div>
                   <div className="mt-3 rounded-lg bg-white/[0.03] px-3 py-2 text-xs leading-relaxed text-muted">
-                    <span className="font-mono text-[10px] text-zinc-500">Rationale · </span>
+                    <span className="font-mono text-[10px] text-zinc-500">AI note · </span>
+                    {line.aiNote}
+                  </div>
+                  <div className="mt-2 rounded-lg bg-white/[0.02] px-3 py-2 text-xs leading-relaxed text-muted">
+                    <span className="font-mono text-[10px] text-zinc-500">Summary · </span>
                     {line.reason}
                   </div>
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
@@ -442,102 +542,27 @@ export function Suggestions() {
                       variant="secondary"
                       size="sm"
                       className="w-full sm:w-auto"
-                      onClick={() => downloadSingleLinePo(line)}
+                      onClick={() => approveSingleLine(line)}
+                      disabled={Boolean(line.disapproved)}
                     >
-                      <FileDown className="h-4 w-4" aria-hidden />
-                      Generate PO PDF
+                      <CheckCircle2 className="h-4 w-4" aria-hidden />
+                      Approve
                     </Button>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      className="po-delete-action w-full sm:w-auto text-rose-300 hover:text-rose-200"
-                      onClick={() => deleteLine(line.ingredientId)}
+                      className="w-full sm:w-auto text-amber-200"
+                      onClick={() => disapproveLine(line.ingredientId)}
+                      disabled={Boolean(line.disapproved)}
                     >
-                      <Trash2 className="h-4 w-4" aria-hidden />
-                      Delete
+                      <ThumbsDown className="h-4 w-4" aria-hidden />
+                      Disapprove
                     </Button>
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="hidden overflow-x-auto lg:block">
-              <table className="w-full min-w-[960px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-b border-white/[0.06] bg-white/[0.02] text-[11px] font-semibold uppercase tracking-wider text-muted">
-                    <th className="px-4 py-2.5 font-medium">Priority</th>
-                    <th className="px-4 py-2.5 font-medium">SKU</th>
-                    <th className="px-4 py-2.5 font-medium">Ingredient</th>
-                    <th className="px-4 py-2.5 font-medium">Vendor</th>
-                    <th className="px-4 py-2.5 font-medium">Suggested qty</th>
-                    <th className="px-4 py-2.5 font-medium">Approved qty</th>
-                    <th className="px-4 py-2.5 font-medium">Est. unit cost</th>
-                    <th className="px-4 py-2.5 font-medium">Rationale</th>
-                    <th className="px-4 py-2.5 font-medium text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {draftLines.map((line) => (
-                    <tr
-                      key={line.ingredientId}
-                      className="border-b border-white/[0.04] transition-colors hover:bg-white/[0.03]"
-                    >
-                      <td className="px-4 py-2.5 align-top">
-                        <Badge variant={priorityBadgeVariant(line.priority)} className="uppercase">
-                          {line.priority}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-2.5 align-top">
-                        <span className="font-mono text-xs text-zinc-300">{line.internalNumber}</span>
-                      </td>
-                      <td className="px-4 py-2.5 align-top">{line.name}</td>
-                      <td className="px-4 py-2.5 align-top">{line.vendorName ?? "—"}</td>
-                      <td className="px-4 py-2.5 align-top">
-                        <span className="font-mono text-sm tabular-nums text-zinc-200">
-                          {line.suggestedOrderQty}{" "}
-                          <span className="text-xs text-muted">{line.inventoryUnit}</span>
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 align-top">
-                        <div className="max-w-28">
-                          <Input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={line.approvedQty}
-                            onChange={(e) => updateApprovedQty(line.ingredientId, e.target.value)}
-                            className="h-9"
-                          />
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5 align-top tabular-nums">{line.unitCost ?? "—"}</td>
-                      <td className="max-w-[320px] px-4 py-2.5 align-top text-muted">{line.reason}</td>
-                      <td className="px-4 py-2.5 align-top">
-                        <div className="flex justify-end gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => downloadSingleLinePo(line)}
-                        >
-                          <FileDown className="h-4 w-4" aria-hidden />
-                          Generate PO
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="po-delete-action text-rose-300 hover:text-rose-200"
-                          onClick={() => deleteLine(line.ingredientId)}
-                        >
-                          <Trash2 className="h-4 w-4" aria-hidden />
-                          Delete
-                        </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </>
         )}
       </Card>
@@ -551,8 +576,8 @@ export function Suggestions() {
               </CardDescription>
             </CardHeader>
           </div>
-          <div className="space-y-3 px-4 pb-5 pt-3 lg:hidden">
-            {approvedLines.map((line) => (
+          <div className="grid grid-cols-1 gap-3 px-4 pb-5 pt-3 md:grid-cols-2 xl:grid-cols-3">
+            {filteredApprovedLines.map((line) => (
               <div
                 key={`${line.ingredientId}-${line.poNumber}-${line.approvedAt}`}
                 className="rounded-xl border border-white/[0.1] bg-zinc-950/50 p-4 shadow-sm shadow-black/20"
@@ -593,44 +618,6 @@ export function Suggestions() {
                 </p>
               </div>
             ))}
-          </div>
-          <div className="hidden overflow-x-auto lg:block">
-            <table className="w-full min-w-[900px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/[0.06] bg-white/[0.02] text-[11px] font-semibold uppercase tracking-wider text-muted">
-                  <th className="px-4 py-2.5 font-medium">PO #</th>
-                  <th className="px-4 py-2.5 font-medium">SKU</th>
-                  <th className="px-4 py-2.5 font-medium">Ingredient</th>
-                  <th className="px-4 py-2.5 font-medium">Vendor</th>
-                  <th className="px-4 py-2.5 font-medium">Approved qty</th>
-                  <th className="px-4 py-2.5 font-medium">Unit</th>
-                  <th className="px-4 py-2.5 font-medium">Approved at</th>
-                </tr>
-              </thead>
-              <tbody>
-                {approvedLines.map((line) => (
-                  <tr
-                    key={`${line.ingredientId}-${line.poNumber}-${line.approvedAt}`}
-                    className="border-b border-white/[0.04] transition-colors hover:bg-white/[0.03]"
-                  >
-                    <td className="px-4 py-2.5 font-mono text-xs text-zinc-300">{line.poNumber}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-zinc-300">
-                      {line.internalNumber}
-                    </td>
-                    <td className="px-4 py-2.5">{line.name}</td>
-                    <td className="px-4 py-2.5">{line.vendorName ?? "—"}</td>
-                    <td className="px-4 py-2.5 font-mono tabular-nums">{line.approvedQty}</td>
-                    <td className="px-4 py-2.5">{line.inventoryUnit}</td>
-                    <td className="px-4 py-2.5 text-xs text-zinc-300">
-                      {new Intl.DateTimeFormat(undefined, {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      }).format(new Date(line.approvedAt))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         </Card>
       )}

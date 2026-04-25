@@ -16,6 +16,25 @@ model Location {
   name String
 }
 
+enum SupplierKind {
+  INTERNAL
+  EXTERNAL
+}
+
+/// Master supplier list (Milestone 2) — emails are fake in seed for non-prod handoff.
+model Supplier {
+  id                     String         @id @default(uuid())
+  code                   String         @unique
+  name                   String
+  kind                   SupplierKind   @default(EXTERNAL)
+  contactEmail           String?
+  orderingDaysNote       String?
+  deliveryDaysNote       String?
+  /// Business days from order to delivery (weekends excluded from the count).
+  leadTimeBusinessDays   Int            @default(2)
+  ingredients            Ingredient[]
+}
+
 model MenuItem {
   id        String       @id @default(uuid())
   code      String       @unique
@@ -33,7 +52,7 @@ model Ingredient {
   name             String
   class            String
   type             String       @default("Food")
-  /// PAR — minimum level to maintain
+  /// PAR — optional reference / alerts (M2 primary driver is forecast + MAPE).
   parLevel         Decimal      @db.Decimal(14, 6)
   /// Stock in inventoryUnit (kg for weight SKUs, each for count)
   onHand           Decimal      @db.Decimal(14, 6)
@@ -45,6 +64,13 @@ model Ingredient {
   /// e.g. 2 kg per pack
   orderPackAmount  Decimal?     @db.Decimal(14, 6)
   orderPackLabel   String?
+  /// Preferred supplier (SupplierITEM / master list).
+  supplierId       String?
+  supplier         Supplier?    @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  /// When forecast MAPE cannot be computed, use this decimal fraction (e.g. 0.10 = 10%).
+  mapeFallbackPct  Decimal?     @db.Decimal(8, 6)
+  /// Max inventory-days of cover for ordering (e.g. avocado). Null = no cap.
+  shelfLifeDays    Int?
   recipeLines      RecipeLine[]
   poLines          PurchaseOrderLine[]
 }
