@@ -31,11 +31,43 @@ function mean(nums: number[]): number {
   return nums.reduce((a, b) => a + b, 0) / nums.length;
 }
 
+/** Max calendar days to walk back when collecting same-weekday samples (3 samples need ~few months). */
+const SAME_WEEKDAY_SCAN_MAX_DAYS = 140;
+
 /**
  * Forecast units for `targetDate` using average of up to `sameWeekdayLookback`
  * prior occurrences of the same weekday (strictly before targetDate).
+ * Optional `cache` keyed by `${dateKey}|${menuItemId}|${lookback}` avoids repeated scans (hot path for PO suggestions).
  */
 export function forecastSameWeekdayAverage(
+  daily: DailyUnitsByMenu,
+  menuItemId: string,
+  targetDate: Date,
+  sameWeekdayLookback: number,
+  cache?: Map<string, number>
+): number {
+  if (cache) {
+    const ck = `${utcDateKey(targetDate)}|${menuItemId}|${sameWeekdayLookback}`;
+    const hit = cache.get(ck);
+    if (hit !== undefined) return hit;
+    const v = forecastSameWeekdayAverageUncached(
+      daily,
+      menuItemId,
+      targetDate,
+      sameWeekdayLookback
+    );
+    cache.set(ck, v);
+    return v;
+  }
+  return forecastSameWeekdayAverageUncached(
+    daily,
+    menuItemId,
+    targetDate,
+    sameWeekdayLookback
+  );
+}
+
+function forecastSameWeekdayAverageUncached(
   daily: DailyUnitsByMenu,
   menuItemId: string,
   targetDate: Date,
@@ -44,7 +76,10 @@ export function forecastSameWeekdayAverage(
   const dow = utcDayOfWeek(targetDate);
   const values: number[] = [];
   let d = addDaysUtc(targetDate, -1);
-  while (values.length < sameWeekdayLookback && daysScanned(d, targetDate) < 400) {
+  while (
+    values.length < sameWeekdayLookback &&
+    daysScanned(d, targetDate) < SAME_WEEKDAY_SCAN_MAX_DAYS
+  ) {
     if (utcDayOfWeek(d) === dow) {
       const k = utcDateKey(d);
       const dayMap = daily.get(k);
@@ -54,7 +89,6 @@ export function forecastSameWeekdayAverage(
     d = addDaysUtc(d, -1);
   }
   if (values.length > 0) return mean(values);
-  // Fallback: overall average for this menu across all days in history
   const all: number[] = [];
   for (const dm of daily.values()) {
     const u = dm.get(menuItemId);
@@ -84,7 +118,8 @@ function daysScanned(from: Date, to: Date): number {
 export function computeMenuMape(
   daily: DailyUnitsByMenu,
   menuItemId: string,
-  maxHistoricalDays: number
+  maxHistoricalDays: number,
+  forecastCache?: Map<string, number>
 ): number {
   const errors: number[] = [];
   const dates = [...daily.keys()].sort();
@@ -95,7 +130,7 @@ export function computeMenuMape(
     const actual = dayMap?.get(menuItemId);
     if (actual == null || actual <= 0) continue;
     const d = parseUtcDate(dateKey);
-    const f = forecastSameWeekdayAverage(daily, menuItemId, d, 3);
+    const f = forecastSameWeekdayAverage(daily, menuItemId, d, 3, forecastCache);
     if (f <= 0) continue;
     const pct = Math.abs(actual - f) / Math.max(actual, 1);
     errors.push(pct);
@@ -186,12 +221,15 @@ export function forecastIngredientCoverWindow(args: {
     unit: RecipeUnit;
   }[];
   inventoryUnit: InventoryUnit;
+  /** Share across ingredients in one engine run for large speedups. */
+  forecastCache?: Map<string, number>;
 }): Decimal {
   const days = nextBusinessDaysExclusive(args.asOf, args.leadBusinessDays);
   let total = new Decimal(0);
+  const cache = args.forecastCache;
   for (const day of days) {
     for (const rl of args.recipeLines) {
-      const fu = forecastSameWeekdayAverage(args.daily, rl.menuItemId, day, 3);
+      const fu = forecastSameWeekdayAverage(args.daily, rl.menuItemId, day, 3, cache);
       total = total.add(
         ingredientDemandForMenuUnits(fu, rl.amount, rl.unit, args.inventoryUnit)
       );

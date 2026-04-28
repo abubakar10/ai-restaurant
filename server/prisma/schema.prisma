@@ -21,18 +21,41 @@ enum SupplierKind {
   EXTERNAL
 }
 
-/// Master supplier list (Milestone 2) — emails are fake in seed for non-prod handoff.
+/// Master supplier list (Milestone 2) — mirrors Google Sheet columns.
 model Supplier {
-  id                     String         @id @default(uuid())
-  code                   String         @unique
-  name                   String
-  kind                   SupplierKind   @default(EXTERNAL)
-  contactEmail           String?
-  orderingDaysNote       String?
-  deliveryDaysNote       String?
+  id                   String           @id @default(uuid())
+  code                 String           @unique
+  name                 String
+  kind                 SupplierKind     @default(EXTERNAL)
+  contactPerson        String?
+  phone                String?
+  contactEmail         String?
+  orderingDaysNote     String?
+  deliveryDaysNote     String?
+  weekendsNote         String?
   /// Business days from order to delivery (weekends excluded from the count).
-  leadTimeBusinessDays   Int            @default(2)
-  ingredients            Ingredient[]
+  leadTimeBusinessDays Int              @default(2)
+  ingredients          Ingredient[]
+  purchaseOrders       PurchaseOrder[]
+}
+
+/// Item master rows (Milestone 2) — mirrors Google Sheet item catalog.
+model ItemMaster {
+  id                         String   @id @default(uuid())
+  itemId                     String   @unique
+  itemName                   String
+  type                       String
+  class                      String
+  baseUom                    String
+  shelfLifeDays              Int?
+  traceBatch                 String?
+  barcode                    String?
+  isProductionItem           Boolean  @default(false)
+  isRecipeIngredient         Boolean  @default(true)
+  sourcingMode               String
+  productionCapacityPerDay   Decimal? @db.Decimal(14, 6)
+  /// Optional link to live ingredient SKU when aligned.
+  ingredientInternalNumber   String?  @unique
 }
 
 model MenuItem {
@@ -112,38 +135,67 @@ model SalesEntry {
 }
 
 model PurchaseOrder {
-  id         String              @id @default(uuid())
-  poNumber   String              @unique
-  status     PurchaseOrderStatus @default(APPROVED)
-  approvedAt DateTime            @default(now())
-  createdAt  DateTime            @default(now())
-  lines      PurchaseOrderLine[]
+  id                   String              @id @default(uuid())
+  poNumber             String              @unique
+  status               PurchaseOrderStatus @default(SENT_TO_SUPPLIER)
+  /// Supervisor approved / PO created.
+  approvedAt           DateTime            @default(now())
+  /// When the supplier notification was sent (email).
+  sentAt               DateTime?
+  /// When the supplier submitted approval on the portal.
+  supplierApprovedAt   DateTime?
+  /// When the supplier declined.
+  supplierDeclinedAt   DateTime?
+  /// Unauthenticated supplier portal access (unguessable).
+  supplierPortalToken  String?             @unique
+  supplierId           String?
+  supplier             Supplier?           @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  /// Header note from supplier (portal).
+  supplierPoNote       String?
+  createdAt            DateTime            @default(now())
+  lines                PurchaseOrderLine[]
 
   @@index([status])
   @@index([approvedAt])
+  @@index([supplierId])
 }
 
 model PurchaseOrderLine {
-  id              String        @id @default(uuid())
-  purchaseOrderId String
-  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  ingredientId    String
-  ingredient      Ingredient    @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
-  name            String
-  internalNumber  String
-  vendorName      String?
-  inventoryUnit   InventoryUnit
-  suggestedQty    Decimal       @db.Decimal(14, 6)
-  approvedQty     Decimal       @db.Decimal(14, 6)
-  unitCost        Decimal?      @db.Decimal(14, 4)
-  createdAt       DateTime      @default(now())
+  id                   String        @id @default(uuid())
+  purchaseOrderId      String
+  purchaseOrder        PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  ingredientId         String
+  ingredient           Ingredient    @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  name                 String
+  internalNumber       String
+  vendorName           String?
+  inventoryUnit        InventoryUnit
+  /// AI-suggested qty (locked after supervisor approval).
+  suggestedQty         Decimal       @db.Decimal(14, 6)
+  /// Supervisor-approved qty sent to supplier (locked).
+  approvedQty          Decimal       @db.Decimal(14, 6)
+  /// Supplier-confirmed qty after portal (null until supplier submits).
+  supplierConfirmedQty Decimal?      @db.Decimal(14, 6)
+  supplierLineNote     String?
+  /// Supervisor receiving confirmation.
+  receivedQty          Decimal?      @db.Decimal(14, 6)
+  receivingNote        String?
+  unitCost             Decimal?      @db.Decimal(14, 4)
+  createdAt            DateTime      @default(now())
 
   @@index([purchaseOrderId])
   @@index([ingredientId])
 }
 
 enum PurchaseOrderStatus {
+  /// Legacy rows (pre–supplier portal); treat like supplier-approved for receiving.
   APPROVED
+  /// Email sent to supplier; awaiting portal response.
+  SENT_TO_SUPPLIER
+  /// Supplier confirmed (possibly with qty changes).
+  SUPPLIER_APPROVED
+  SUPPLIER_DECLINED
+  /// Goods received and inventory updated.
   RECEIVED
   CANCELLED
 }

@@ -4,6 +4,7 @@ import {
   RecipeUnit,
   SupplierKind,
 } from "@prisma/client";
+import { Decimal } from "@prisma/client/runtime/library";
 
 const prisma = new PrismaClient();
 
@@ -45,6 +46,7 @@ async function main() {
   await prisma.recipeLine.deleteMany();
   await prisma.menuItem.deleteMany();
   await prisma.ingredient.deleteMany();
+  await prisma.itemMaster.deleteMany();
   await prisma.supplier.deleteMany();
   await prisma.location.deleteMany();
 
@@ -58,9 +60,12 @@ async function main() {
         code: "SUP001",
         name: "Santos Production",
         kind: SupplierKind.INTERNAL,
-        contactEmail: "orders@santos-aruba.example.invalid",
+        contactPerson: "Maria Santos",
+        phone: "297 555 0101",
+        contactEmail: "maria@santos.aw",
         orderingDaysNote: "Daily",
-        deliveryDaysNote: "Daily (no weekend delivery)",
+        deliveryDaysNote: "Daily",
+        weekendsNote: "No",
         leadTimeBusinessDays: 2,
       },
     }),
@@ -69,9 +74,12 @@ async function main() {
         code: "SUP002",
         name: "Island Dairy Co",
         kind: SupplierKind.EXTERNAL,
+        contactPerson: "Jan van Berg",
+        phone: "297 555 0202",
         contactEmail: "orders+island-test@example.invalid",
-        orderingDaysNote: "Mon/Wed order → Tue/Thu delivery (see master sheet)",
-        deliveryDaysNote: "Tue/Thu",
+        orderingDaysNote: "Monday/Wednesday",
+        deliveryDaysNote: "Tuesday/Thursday",
+        weekendsNote: "No",
         leadTimeBusinessDays: 2,
       },
     }),
@@ -80,9 +88,12 @@ async function main() {
         code: "SUP003",
         name: "Compra Aruba",
         kind: SupplierKind.EXTERNAL,
+        contactPerson: "Orders Desk",
+        phone: "297 555 0303",
         contactEmail: "orders+compra-test@example.invalid",
-        orderingDaysNote: "Tue/Wed/Thu",
-        deliveryDaysNote: "Wed/Thu",
+        orderingDaysNote: "Tuesday/Wednesday",
+        deliveryDaysNote: "Wednesday/Thursday",
+        weekendsNote: "No",
         leadTimeBusinessDays: 2,
       },
     }),
@@ -91,9 +102,12 @@ async function main() {
         code: "SUP004",
         name: "Fresh Ocean Seafood",
         kind: SupplierKind.EXTERNAL,
+        contactPerson: "Catch Coordinator",
+        phone: "297 555 0404",
         contactEmail: "orders+ocean-test@example.invalid",
         orderingDaysNote: "Mon–Thu",
         deliveryDaysNote: "Tue–Fri",
+        weekendsNote: "No",
         leadTimeBusinessDays: 2,
       },
     }),
@@ -102,9 +116,12 @@ async function main() {
         code: "SUP005",
         name: "Global Food Supply",
         kind: SupplierKind.EXTERNAL,
+        contactPerson: "Warehouse",
+        phone: "297 555 0505",
         contactEmail: "orders+global-test@example.invalid",
         orderingDaysNote: "Wednesday",
         deliveryDaysNote: "Friday",
+        weekendsNote: "No",
         leadTimeBusinessDays: 2,
       },
     }),
@@ -113,9 +130,12 @@ async function main() {
         code: "SUP006",
         name: "Tropic Produce Farms",
         kind: SupplierKind.EXTERNAL,
+        contactPerson: "Field Office",
+        phone: "297 555 0606",
         contactEmail: "orders+tropic-test@example.invalid",
         orderingDaysNote: "Monday",
         deliveryDaysNote: "Thursday",
+        weekendsNote: "No",
         leadTimeBusinessDays: 2,
       },
     }),
@@ -124,6 +144,101 @@ async function main() {
     string,
     { id: string }
   >;
+
+  await prisma.itemMaster.createMany({
+    data: [
+      {
+        itemId: "ITM001",
+        itemName: "Plain Bagel 120g",
+        type: "Bakery",
+        class: "Bread",
+        baseUom: "each",
+        shelfLifeDays: 3,
+        traceBatch: "yes",
+        barcode: null,
+        isProductionItem: false,
+        isRecipeIngredient: true,
+        sourcingMode: "Buy",
+        productionCapacityPerDay: null,
+        ingredientInternalNumber: "ITM001",
+      },
+      {
+        itemId: "ITM002",
+        itemName: "Butter Croissant 80g",
+        type: "Bakery",
+        class: "Bread",
+        baseUom: "each",
+        shelfLifeDays: 2,
+        traceBatch: null,
+        barcode: null,
+        isProductionItem: true,
+        isRecipeIngredient: true,
+        sourcingMode: "Hybrid",
+        productionCapacityPerDay: new Decimal(48),
+        ingredientInternalNumber: "ITM002",
+      },
+      {
+        itemId: "ITM003",
+        itemName: "Cream Cheese Block 2kg",
+        type: "Dairy",
+        class: "Dairy",
+        baseUom: "g",
+        shelfLifeDays: 21,
+        traceBatch: "yes",
+        barcode: null,
+        isProductionItem: false,
+        isRecipeIngredient: true,
+        sourcingMode: "Buy",
+        productionCapacityPerDay: null,
+        ingredientInternalNumber: "ITM003",
+      },
+      {
+        itemId: "ITM004",
+        itemName: "Smoked Salmon Fillet",
+        type: "Meat",
+        class: "Fish",
+        baseUom: "g",
+        shelfLifeDays: 14,
+        traceBatch: "yes",
+        barcode: null,
+        isProductionItem: false,
+        isRecipeIngredient: true,
+        sourcingMode: "Buy",
+        productionCapacityPerDay: null,
+        ingredientInternalNumber: "ITM004",
+      },
+      {
+        itemId: "ITM005",
+        itemName: "Capers Jar 1kg",
+        type: "Pantry",
+        class: "Condiment",
+        baseUom: "g",
+        shelfLifeDays: 365,
+        traceBatch: null,
+        barcode: null,
+        isProductionItem: false,
+        isRecipeIngredient: true,
+        sourcingMode: "Buy",
+        productionCapacityPerDay: null,
+        ingredientInternalNumber: "ITM005",
+      },
+      {
+        itemId: "ITM006",
+        itemName: "Pistachio Cream 3kg Tub",
+        type: "Prepared",
+        class: "Filling",
+        baseUom: "g",
+        shelfLifeDays: 180,
+        traceBatch: null,
+        barcode: null,
+        isProductionItem: true,
+        isRecipeIngredient: true,
+        sourcingMode: "Hybrid",
+        productionCapacityPerDay: new Decimal(2000),
+        ingredientInternalNumber: "ITM006",
+      },
+    ],
+  });
 
   const m001 = await prisma.menuItem.create({
     data: {
@@ -470,7 +585,7 @@ async function main() {
   await prisma.salesEntry.createMany({ data: salesBatch });
 
   console.log(
-    "Seed complete: suppliers, menu, ingredients, recipes, sales history."
+    "Seed complete: suppliers, item masters, menu, ingredients, recipes, sales history."
   );
 }
 

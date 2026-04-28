@@ -9,6 +9,9 @@ export const qk = {
   approvedPoLines: ["suggestions", "po", "approved"] as const,
   menuItems: ["menu-items"] as const,
   sales: ["sales"] as const,
+  itemMasters: ["item-masters"] as const,
+  suppliersMaster: ["suppliers-master"] as const,
+  purchaseOrders: ["purchase-orders"] as const,
 };
 
 export const queryClient = new QueryClient({

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -6,7 +6,7 @@ import {
   type ColumnDef,
 } from "@tanstack/react-table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clock, Plus, Save, X } from "lucide-react";
+import { Clock, Plus, X } from "lucide-react";
 import { api } from "../lib/api";
 import { qk } from "../lib/queryClient";
 import { PageHeader } from "../components/PageHeader";
@@ -62,40 +62,12 @@ export function Inventory() {
     queryKey: qk.ingredients,
     queryFn: () => api<Ingredient[]>("/ingredients"),
   });
-  const [edits, setEdits] = useState<Record<string, string>>({});
-  const editsRef = useRef(edits);
-  editsRef.current = edits;
-  const [saving, setSaving] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createMsg, setCreateMsg] = useState<string | null>(null);
   const [form, setForm] = useState<NewIngredientForm>(initialNewIngredientForm);
 
   const data = useMemo(() => rows, [rows]);
-
-  const commitRow = useCallback(async (row: Ingredient) => {
-      const id = row.id;
-      const raw = editsRef.current[id] ?? row.onHand;
-      const num = Number(raw);
-      if (Number.isNaN(num) || num < 0) return;
-      setSaving(id);
-      try {
-        await api(`/ingredients/${id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ onHand: num }),
-        });
-        await queryClient.invalidateQueries({ queryKey: qk.ingredients });
-        await queryClient.invalidateQueries({ queryKey: qk.dashboard });
-        await queryClient.invalidateQueries({ queryKey: qk.suggestionsPo });
-        setEdits((prev) => {
-          const n = { ...prev };
-          delete n[id];
-          return n;
-        });
-      } finally {
-        setSaving(null);
-      }
-  }, [queryClient]);
 
   const columns = useMemo<ColumnDef<Ingredient>[]>(
     () => [
@@ -111,19 +83,11 @@ export function Inventory() {
       {
         accessorKey: "onHand",
         header: "On hand",
-        cell: ({ row }) => {
-          const id = row.original.id;
-          const val = edits[id] ?? row.original.onHand;
-          return (
-            <Input
-              className="h-9 max-w-[120px] border-white/[0.1] bg-zinc-950/50 font-mono text-xs tabular-nums"
-              value={val}
-              onChange={(e) =>
-                setEdits((prev) => ({ ...prev, [id]: e.target.value }))
-              }
-            />
-          );
-        },
+        cell: ({ getValue }) => (
+          <span className="font-mono text-xs tabular-nums text-foreground">
+            {getValue<string>()}
+          </span>
+        ),
       },
       {
         accessorKey: "parLevel",
@@ -143,7 +107,7 @@ export function Inventory() {
         id: "status",
         header: "Status",
         cell: ({ row }) => {
-          const on = Number(edits[row.original.id] ?? row.original.onHand);
+          const on = Number(row.original.onHand);
           const par = Number(row.original.parLevel);
           const ok = on >= par;
           return (
@@ -153,25 +117,8 @@ export function Inventory() {
           );
         },
       },
-      {
-        id: "save",
-        header: "",
-        cell: ({ row }) => (
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="gap-1"
-            disabled={saving === row.original.id}
-            onClick={() => commitRow(row.original)}
-          >
-            <Save className="h-3.5 w-3.5" />
-            Save
-          </Button>
-        ),
-      },
     ],
-    [commitRow, edits, saving]
+    []
   );
 
   const table = useReactTable({
@@ -248,7 +195,7 @@ export function Inventory() {
       <PageHeader
         eyebrow="Stock on hand"
         title="Inventory"
-        description="Edit counted quantities per ingredient. PAR comparison and procurement suggestions update when you save a row."
+        description="On-hand is system-driven from sales depletions and receiving posts — not edited here. PAR comparison and AI procurement use these balances."
         meta={
           <div className="flex flex-col items-stretch gap-2 sm:items-end">
             <Button size="sm" onClick={() => setIsModalOpen(true)}>
@@ -283,9 +230,9 @@ export function Inventory() {
           <CardHeader className="p-0">
             <CardTitle className="text-base">Stock sheet</CardTitle>
             <CardDescription>
-              Single location view — edit on hand, then save per line to commit.
+              Single location view — read-only stock. Count changes flow from Sales and Receiving (and seed data), not manual edits on this sheet.
               <span className="mt-1 block lg:hidden">
-                On smaller screens, each SKU is a card for easier editing.
+                On smaller screens, each SKU is shown as a card for readability.
               </span>
             </CardDescription>
           </CardHeader>
@@ -299,10 +246,9 @@ export function Inventory() {
           <>
             <div className="space-y-3 px-4 pb-5 pt-2 lg:hidden">
               {rows.map((row) => {
-                const on = Number(edits[row.id] ?? row.onHand);
+                const on = Number(row.onHand);
                 const par = Number(row.parLevel);
                 const ok = on >= par;
-                const val = edits[row.id] ?? row.onHand;
                 return (
                   <div
                     key={row.id}
@@ -322,17 +268,10 @@ export function Inventory() {
                     </div>
                     <div className="mt-4 space-y-3">
                       <div>
-                        <label className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">
                           On hand
-                        </label>
-                        <Input
-                          className="mt-1 h-10 w-full border-white/[0.1] bg-zinc-950/50 font-mono text-sm tabular-nums"
-                          value={val}
-                          inputMode="decimal"
-                          onChange={(e) =>
-                            setEdits((prev) => ({ ...prev, [row.id]: e.target.value }))
-                          }
-                        />
+                        </p>
+                        <p className="mt-1 font-mono text-sm tabular-nums text-foreground">{row.onHand}</p>
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
@@ -350,17 +289,6 @@ export function Inventory() {
                           <p className="mt-1 text-sm">{row.inventoryUnit}</p>
                         </div>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="w-full gap-1"
-                        disabled={saving === row.id}
-                        onClick={() => commitRow(row)}
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                        Save
-                      </Button>
                     </div>
                   </div>
                 );
@@ -426,7 +354,8 @@ export function Inventory() {
                   Add new inventory item
                 </h3>
                 <p className="mt-1 text-sm text-muted">
-                  Create a new ingredient SKU for inventory and AI procurement.
+                  Create a new ingredient SKU for inventory and AI procurement. Initial on-hand applies only at
+                  creation; existing rows are not edited here (use Sales + Receiving).
                 </p>
               </div>
               <Button

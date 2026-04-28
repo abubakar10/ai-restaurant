@@ -1,16 +1,25 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../prisma.js";
 import { recordSale } from "../lib/salesService.js";
 import { buildPoSuggestions } from "../lib/suggestions.js";
 import { Decimal } from "@prisma/client/runtime/library";
-import { sendApprovedPoEmail } from "../lib/mailer.js";
+import {
+  resolveSupplierPoRecipients,
+  sendSupplierPoEmail,
+} from "../lib/mailer.js";
 
 export const apiRouter = Router();
 
 function isMissingTableError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return error.message.includes("does not exist") || error.message.includes("P2021");
+}
+
+function clientWebOrigin(): string {
+  const raw = process.env.CLIENT_ORIGIN?.trim()?.split(",")[0]?.replace(/\/$/, "");
+  return raw || "http://localhost:5173";
 }
 
 apiRouter.get("/health", (_req, res) => {
@@ -35,6 +44,36 @@ apiRouter.get("/ingredients", async (_req, res) => {
     orderBy: { internalNumber: "asc" },
   });
   res.json(rows);
+});
+
+apiRouter.get("/suppliers", async (_req, res) => {
+  try {
+    const rows = await prisma.supplier.findMany({
+      orderBy: { code: "asc" },
+    });
+    res.json(rows);
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      res.json([]);
+      return;
+    }
+    throw error;
+  }
+});
+
+apiRouter.get("/item-masters", async (_req, res) => {
+  try {
+    const rows = await prisma.itemMaster.findMany({
+      orderBy: { itemId: "asc" },
+    });
+    res.json(rows);
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      res.json([]);
+      return;
+    }
+    throw error;
+  }
 });
 
 const patchIng = z.object({
@@ -180,27 +219,84 @@ apiRouter.post("/suggestions/po/approve", async (req, res) => {
     return;
   }
 
-  const totalEstimated = parsed.data.lines.reduce((sum, line) => {
-    if (line.unitCost == null) return sum;
-    return sum + line.approvedQty * line.unitCost;
-  }, 0);
-
-  const vendorCount = new Set(
-    parsed.data.lines.map((l) => l.vendorName).filter((v): v is string => Boolean(v))
-  ).size;
-
-  const poNumber = `PO-${Date.now().toString().slice(-6)}`;
-  const approvedAt = new Date().toISOString();
   const approvedLines = parsed.data.lines.filter((line) => line.approvedQty > 0);
-  let lineCount = approvedLines.length;
+  if (approvedLines.length === 0) {
+    res.status(400).json({ error: "At least one line needs approved quantity > 0" });
+    return;
+  }
+
+  const ingredientIds = [...new Set(approvedLines.map((l) => l.ingredientId))];
+  const ingredients = await prisma.ingredient.findMany({
+    where: { id: { in: ingredientIds } },
+    select: { id: true, supplierId: true },
+  });
+  const supplierIdByIngredient = new Map(
+    ingredients.map((i) => [i.id, i.supplierId] as const)
+  );
+
+  const groups = new Map<string, typeof approvedLines>();
+  for (const line of approvedLines) {
+    const sid = supplierIdByIngredient.get(line.ingredientId) ?? null;
+    const key = sid ?? "__none__";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(line);
+  }
+
+  const supplierIds = [...groups.keys()].filter((k) => k !== "__none__");
+  const suppliers =
+    supplierIds.length > 0
+      ? await prisma.supplier.findMany({
+          where: { id: { in: supplierIds } },
+        })
+      : [];
+  const supplierById = new Map(suppliers.map((s) => [s.id, s] as const));
+
+  const baseStamp = Date.now();
+  let groupIndex = 0;
+  const posOut: {
+    poNumber: string;
+    approvedAt: string;
+    lineCount: number;
+    supplierName: string | null;
+    supplierCode: string | null;
+    portalUrl: string;
+    email: { sent: boolean; to: string; mode: "smtp" | "simulated"; error?: string | null };
+    totalEstimated: string;
+    pdfLines: {
+      sku: string;
+      ingredient: string;
+      vendor: string | null;
+      suggestedQty: string;
+      approvedQty: string;
+      unit: string;
+      unitCost: string | null;
+    }[];
+  }[] = [];
+
   try {
-    const po = await prisma.purchaseOrder.create({
-      data: {
-        poNumber,
-        approvedAt,
-        status: "APPROVED",
-        lines: {
-          create: approvedLines.map((line) => ({
+    for (const [supplierKey, lines] of groups) {
+      groupIndex += 1;
+      const poNumber = `PO-${baseStamp}-${groupIndex}`;
+      const token = randomUUID();
+      const approvedAtDate = new Date();
+      const supplierId = supplierKey === "__none__" ? null : supplierKey;
+      const supplier = supplierId ? supplierById.get(supplierId) ?? null : null;
+
+      const totalEstimated = lines.reduce((sum, line) => {
+        if (line.unitCost == null) return sum;
+        return sum + line.approvedQty * line.unitCost;
+      }, 0);
+
+      await prisma.purchaseOrder.create({
+        data: {
+          poNumber,
+          approvedAt: approvedAtDate,
+          sentAt: approvedAtDate,
+          status: "SENT_TO_SUPPLIER",
+          supplierPortalToken: token,
+          supplierId,
+          lines: {
+            create: lines.map((line) => ({
               ingredientId: line.ingredientId,
               name: line.name,
               internalNumber: line.internalNumber,
@@ -210,58 +306,113 @@ apiRouter.post("/suggestions/po/approve", async (req, res) => {
               approvedQty: new Decimal(line.approvedQty),
               unitCost: line.unitCost == null ? null : new Decimal(line.unitCost),
             })),
+          },
         },
-      },
-      include: { lines: true },
-    });
-    lineCount = po.lines.length;
+      });
+
+      const portalUrl = `${clientWebOrigin()}/po/supplier/${token}`;
+      const recipients = resolveSupplierPoRecipients({
+        supplierCode: supplier?.code ?? null,
+        supplierName: supplier?.name ?? "Supplier",
+        contactEmail: supplier?.contactEmail ?? null,
+      });
+
+      const emailResult = await sendSupplierPoEmail({
+        poNumber,
+        supplierName: supplier?.name ?? "Supplier",
+        supplierCode: supplier?.code ?? null,
+        approvedAtIso: approvedAtDate.toISOString(),
+        totalEstimated,
+        portalUrl,
+        to: recipients,
+        lines: lines.map((line) => ({
+          sku: line.internalNumber,
+          name: line.name,
+          vendorName: line.vendorName,
+          qty: line.approvedQty,
+          unit: line.inventoryUnit,
+          unitCost: line.unitCost,
+        })),
+      });
+
+      posOut.push({
+        poNumber,
+        approvedAt: approvedAtDate.toISOString(),
+        lineCount: lines.length,
+        supplierName: supplier?.name ?? null,
+        supplierCode: supplier?.code ?? null,
+        portalUrl,
+        email: {
+          sent: emailResult.sent,
+          to: emailResult.to,
+          mode: emailResult.mode,
+          error: emailResult.error ?? null,
+        },
+        totalEstimated: totalEstimated.toFixed(2),
+        pdfLines: lines.map((line) => ({
+          sku: line.internalNumber,
+          ingredient: line.name,
+          vendor: line.vendorName ?? null,
+          suggestedQty: String(line.suggestedQty),
+          approvedQty: String(line.approvedQty),
+          unit: line.inventoryUnit,
+          unitCost: line.unitCost == null ? null : String(line.unitCost),
+        })),
+      });
+    }
   } catch (error) {
-    // Backward compatibility before PO table migration is applied.
     if (!isMissingTableError(error)) {
       throw error;
     }
+    res.status(503).json({ error: "Purchase order storage not available (run db push)." });
+    return;
   }
 
-  const emailResult = await sendApprovedPoEmail({
-    poNumber,
-    approvedAtIso: approvedAt,
-    totalEstimated,
-    lines: approvedLines.map((line) => ({
-      sku: line.internalNumber,
-      name: line.name,
-      vendorName: line.vendorName,
-      qty: line.approvedQty,
-      unit: line.inventoryUnit,
-      unitCost: line.unitCost,
-    })),
-  });
-
+  const first = posOut[0];
   res.status(201).json({
-    poNumber,
-    approvedAt,
-    lineCount,
-    vendorCount,
-    totalEstimated: totalEstimated.toFixed(2),
-    status: "approved_for_supplier",
-    email: {
-      sent: emailResult.sent,
-      to: emailResult.to,
-      mode: emailResult.mode,
-      error: emailResult.error ?? null,
-    },
+    pos: posOut,
+    poCount: posOut.length,
+    lineCount: approvedLines.length,
+    vendorCount: groups.size,
+    poNumber: first?.poNumber,
+    approvedAt: first?.approvedAt,
+    totalEstimated: posOut.reduce((s, p) => s + Number.parseFloat(p.totalEstimated), 0).toFixed(2),
+    status: "sent_to_suppliers",
   });
 });
 
 apiRouter.get("/suggestions/po/approved", async (_req, res) => {
   try {
     const rows = await prisma.purchaseOrderLine.findMany({
-      where: { purchaseOrder: { status: "APPROVED" } },
+      where: {
+        purchaseOrder: {
+          status: {
+            in: [
+              "APPROVED",
+              "SENT_TO_SUPPLIER",
+              "SUPPLIER_APPROVED",
+              "RECEIVED",
+              "SUPPLIER_DECLINED",
+            ],
+          },
+        },
+      },
       include: {
         purchaseOrder: {
-          select: { poNumber: true, approvedAt: true },
+          select: {
+            poNumber: true,
+            approvedAt: true,
+            sentAt: true,
+            status: true,
+            supplierApprovedAt: true,
+            supplierDeclinedAt: true,
+            supplierPoNote: true,
+            supplier: { select: { code: true, name: true } },
+          },
         },
       },
       orderBy: [{ purchaseOrder: { approvedAt: "desc" } }, { createdAt: "desc" }],
+      take: 300,
     });
     res.json(
       rows.map((line) => ({
@@ -273,9 +424,20 @@ apiRouter.get("/suggestions/po/approved", async (_req, res) => {
         inventoryUnit: line.inventoryUnit,
         suggestedQty: line.suggestedQty.toString(),
         approvedQty: line.approvedQty.toString(),
+        supplierConfirmedQty: line.supplierConfirmedQty?.toString() ?? null,
+        supplierLineNote: line.supplierLineNote,
+        receivedQty: line.receivedQty?.toString() ?? null,
+        receivingNote: line.receivingNote,
         unitCost: line.unitCost?.toString() ?? null,
         poNumber: line.purchaseOrder.poNumber,
+        poStatus: line.purchaseOrder.status,
         approvedAt: line.purchaseOrder.approvedAt.toISOString(),
+        sentAt: line.purchaseOrder.sentAt?.toISOString() ?? null,
+        supplierApprovedAt: line.purchaseOrder.supplierApprovedAt?.toISOString() ?? null,
+        supplierDeclinedAt: line.purchaseOrder.supplierDeclinedAt?.toISOString() ?? null,
+        supplierPoNote: line.purchaseOrder.supplierPoNote,
+        supplierCode: line.purchaseOrder.supplier?.code ?? null,
+        supplierName: line.purchaseOrder.supplier?.name ?? null,
       }))
     );
   } catch (error) {
@@ -287,24 +449,306 @@ apiRouter.get("/suggestions/po/approved", async (_req, res) => {
   }
 });
 
+apiRouter.get("/purchase-orders", async (_req, res) => {
+  try {
+    const rows = await prisma.purchaseOrder.findMany({
+      orderBy: { approvedAt: "desc" },
+      take: 120,
+      include: {
+        supplier: { select: { code: true, name: true, contactEmail: true } },
+        lines: {
+          select: {
+            id: true,
+            name: true,
+            internalNumber: true,
+            suggestedQty: true,
+            approvedQty: true,
+            supplierConfirmedQty: true,
+            supplierLineNote: true,
+            receivedQty: true,
+            receivingNote: true,
+            inventoryUnit: true,
+          },
+        },
+      },
+    });
+    res.json(
+      rows.map((po) => ({
+        id: po.id,
+        poNumber: po.poNumber,
+        status: po.status,
+        approvedAt: po.approvedAt.toISOString(),
+        sentAt: po.sentAt?.toISOString() ?? null,
+        supplierApprovedAt: po.supplierApprovedAt?.toISOString() ?? null,
+        supplierDeclinedAt: po.supplierDeclinedAt?.toISOString() ?? null,
+        supplierPoNote: po.supplierPoNote,
+        supplier: po.supplier,
+        lineCount: po.lines.length,
+        lines: po.lines.map((l) => ({
+          id: l.id,
+          name: l.name,
+          internalNumber: l.internalNumber,
+          suggestedQty: l.suggestedQty.toString(),
+          approvedQty: l.approvedQty.toString(),
+          supplierConfirmedQty: l.supplierConfirmedQty?.toString() ?? null,
+          supplierLineNote: l.supplierLineNote,
+          receivedQty: l.receivedQty?.toString() ?? null,
+          receivingNote: l.receivingNote,
+          inventoryUnit: l.inventoryUnit,
+        })),
+      }))
+    );
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      res.json([]);
+      return;
+    }
+    throw error;
+  }
+});
+
+const receiveBody = z.object({
+  lines: z
+    .array(
+      z.object({
+        lineId: z.string().uuid(),
+        receivedQty: z.number().nonnegative(),
+        receivingNote: z.string().max(2000).optional(),
+      })
+    )
+    .min(1),
+});
+
+apiRouter.post("/purchase-orders/:id/receive", async (req, res) => {
+  const parsed = receiveBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const poId = req.params.id;
+  try {
+    const po = await prisma.purchaseOrder.findUnique({
+      where: { id: poId },
+      include: { lines: true },
+    });
+    if (!po) {
+      res.status(404).json({ error: "PO not found" });
+      return;
+    }
+    if (po.status === "RECEIVED" || po.status === "CANCELLED") {
+      res.status(400).json({ error: "PO cannot be received in this state" });
+      return;
+    }
+    if (po.status === "SUPPLIER_DECLINED") {
+      res.status(400).json({ error: "Declined PO cannot be received" });
+      return;
+    }
+
+    const lineIds = new Set(po.lines.map((l) => l.id));
+    for (const l of parsed.data.lines) {
+      if (!lineIds.has(l.lineId)) {
+        res.status(400).json({ error: "Unknown line on this PO" });
+        return;
+      }
+    }
+    if (parsed.data.lines.length !== po.lines.length) {
+      res.status(400).json({ error: "Provide received quantities for every line on the PO" });
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const upd of parsed.data.lines) {
+        const line = po.lines.find((x) => x.id === upd.lineId)!;
+        await tx.purchaseOrderLine.update({
+          where: { id: upd.lineId },
+          data: {
+            receivedQty: new Decimal(upd.receivedQty),
+            receivingNote: upd.receivingNote?.trim() || null,
+          },
+        });
+        const ing = await tx.ingredient.findUnique({
+          where: { id: line.ingredientId },
+          select: { onHand: true },
+        });
+        if (ing) {
+          await tx.ingredient.update({
+            where: { id: line.ingredientId },
+            data: { onHand: ing.onHand.add(new Decimal(upd.receivedQty)) },
+          });
+        }
+      }
+      await tx.purchaseOrder.update({
+        where: { id: poId },
+        data: { status: "RECEIVED" },
+      });
+    });
+
+    res.json({ ok: true, status: "RECEIVED" });
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      res.status(503).json({ error: "Database schema out of date" });
+      return;
+    }
+    throw error;
+  }
+});
+
+const supplierSubmitBody = z.object({
+  action: z.enum(["approve", "decline"]),
+  poNote: z.string().max(4000).optional(),
+  lines: z
+    .array(
+      z.object({
+        lineId: z.string().uuid(),
+        supplierConfirmedQty: z.number().nonnegative(),
+        supplierLineNote: z.string().max(2000).optional(),
+      })
+    )
+    .optional(),
+});
+
+apiRouter.get("/public/po/:token", async (req, res) => {
+  const token = req.params.token;
+  try {
+    const po = await prisma.purchaseOrder.findFirst({
+      where: { supplierPortalToken: token },
+      include: {
+        supplier: { select: { code: true, name: true } },
+        lines: { orderBy: { internalNumber: "asc" } },
+      },
+    });
+    if (!po) {
+      res.status(404).json({ error: "Invalid or expired link" });
+      return;
+    }
+    res.json({
+      poNumber: po.poNumber,
+      status: po.status,
+      supplierName: po.supplier?.name ?? null,
+      supplierCode: po.supplier?.code ?? null,
+      approvedAt: po.approvedAt.toISOString(),
+      sentAt: po.sentAt?.toISOString() ?? null,
+      supplierApprovedAt: po.supplierApprovedAt?.toISOString() ?? null,
+      supplierDeclinedAt: po.supplierDeclinedAt?.toISOString() ?? null,
+      supplierPoNote: po.supplierPoNote,
+      lines: po.lines.map((l) => ({
+        id: l.id,
+        name: l.name,
+        internalNumber: l.internalNumber,
+        inventoryUnit: l.inventoryUnit,
+        suggestedQty: l.suggestedQty.toString(),
+        approvedQty: l.approvedQty.toString(),
+        supplierConfirmedQty: l.supplierConfirmedQty?.toString() ?? null,
+        supplierLineNote: l.supplierLineNote,
+        readOnly: po.status !== "SENT_TO_SUPPLIER",
+      })),
+    });
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      res.status(503).json({ error: "Unavailable" });
+      return;
+    }
+    throw error;
+  }
+});
+
+apiRouter.post("/public/po/:token/submit", async (req, res) => {
+  const parsed = supplierSubmitBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const token = req.params.token;
+  try {
+    const po = await prisma.purchaseOrder.findFirst({
+      where: { supplierPortalToken: token },
+      include: { lines: true },
+    });
+    if (!po) {
+      res.status(404).json({ error: "Invalid or expired link" });
+      return;
+    }
+    if (po.status !== "SENT_TO_SUPPLIER") {
+      res.status(400).json({ error: "This PO is no longer open for supplier edits" });
+      return;
+    }
+
+    const now = new Date();
+    if (parsed.data.action === "decline") {
+      await prisma.purchaseOrder.update({
+        where: { id: po.id },
+        data: {
+          status: "SUPPLIER_DECLINED",
+          supplierDeclinedAt: now,
+          supplierPoNote: parsed.data.poNote?.trim() || null,
+        },
+      });
+      res.json({ ok: true, status: "SUPPLIER_DECLINED" });
+      return;
+    }
+
+    const linePayload = parsed.data.lines ?? [];
+    if (linePayload.length !== po.lines.length) {
+      res.status(400).json({ error: "Submit a row for every line on the PO" });
+      return;
+    }
+    const ids = new Set(po.lines.map((l) => l.id));
+    for (const row of linePayload) {
+      if (!ids.has(row.lineId)) {
+        res.status(400).json({ error: "Unknown line id" });
+        return;
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const row of linePayload) {
+        await tx.purchaseOrderLine.update({
+          where: { id: row.lineId },
+          data: {
+            supplierConfirmedQty: new Decimal(row.supplierConfirmedQty),
+            supplierLineNote: row.supplierLineNote?.trim() || null,
+          },
+        });
+      }
+      await tx.purchaseOrder.update({
+        where: { id: po.id },
+        data: {
+          status: "SUPPLIER_APPROVED",
+          supplierApprovedAt: now,
+          supplierPoNote: parsed.data.poNote?.trim() || null,
+        },
+      });
+    });
+
+    res.json({ ok: true, status: "SUPPLIER_APPROVED" });
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      res.status(503).json({ error: "Unavailable" });
+      return;
+    }
+    throw error;
+  }
+});
+
 apiRouter.get("/dashboard", async (_req, res) => {
-  // Run both queries in parallel — sequential doubles RTT to Supabase (often 100–400ms each hop).
   const [[counts], preview] = await Promise.all([
     prisma.$queryRaw<
       [
         {
           ingredients: bigint;
-          below_par: bigint;
-          sales: bigint;
           menus: bigint;
+          approvedPoCount: bigint;
         },
       ]
     >`
       SELECT
         (SELECT COUNT(*)::bigint FROM "Ingredient") AS ingredients,
-        (SELECT COUNT(*)::bigint FROM "Ingredient" WHERE "onHand" < "parLevel") AS below_par,
-        (SELECT COUNT(*)::bigint FROM "SalesEntry") AS sales,
-        (SELECT COUNT(*)::bigint FROM "MenuItem") AS menus
+        (SELECT COUNT(*)::bigint FROM "MenuItem") AS menus,
+        (
+          SELECT COUNT(*)::bigint
+          FROM "PurchaseOrder"
+          WHERE status IN ('SENT_TO_SUPPLIER', 'SUPPLIER_APPROVED', 'APPROVED')
+        ) AS "approvedPoCount"
     `,
     prisma.$queryRaw<
       { id: string; name: string; onHand: unknown; parLevel: unknown }[]
@@ -320,9 +764,8 @@ apiRouter.get("/dashboard", async (_req, res) => {
   res.json({
     stats: {
       ingredients: Number(counts.ingredients),
-      belowPar: Number(counts.below_par),
-      salesEntries: Number(counts.sales),
       menuItems: Number(counts.menus),
+      approvedPoCount: Number(counts.approvedPoCount),
     },
     belowParPreview: preview.map((i) => ({
       id: i.id,

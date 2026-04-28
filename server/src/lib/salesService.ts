@@ -29,11 +29,7 @@ export async function recordSale(menuItemId: string, quantity: number) {
         line.ingredient.inventoryUnit
       );
       const next = line.ingredient.onHand.sub(use);
-      if (next.lt(0)) {
-        throw new Error(
-          `Insufficient stock for ${line.ingredient.name}. Need ${use.toFixed(3)}, have ${line.ingredient.onHand.toString()}.`
-        );
-      }
+      // Sales always post: negative on-hand is allowed (client ops). Treat as a signal to reorder / reconcile.
       await tx.ingredient.update({
         where: { id: line.ingredientId },
         data: { onHand: next },

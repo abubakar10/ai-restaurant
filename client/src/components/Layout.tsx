@@ -11,6 +11,10 @@ import {
   X,
   Moon,
   Sun,
+  Boxes,
+  Truck,
+  ClipboardList,
+  PackageOpen,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -19,7 +23,11 @@ const nav = [
   { to: "/sales", label: "Sales", icon: ShoppingCart },
   { to: "/inventory", label: "Inventory", icon: Package },
   { to: "/recipes", label: "Recipes", icon: ChefHat },
+  { to: "/items", label: "Items", icon: Boxes },
+  { to: "/suppliers", label: "Suppliers", icon: Truck },
   { to: "/suggestions", label: "AI PO", icon: Sparkles },
+  { to: "/po-status", label: "PO status", icon: ClipboardList },
+  { to: "/receiving", label: "Receiving", icon: PackageOpen },
 ];
 
 export function Layout() {

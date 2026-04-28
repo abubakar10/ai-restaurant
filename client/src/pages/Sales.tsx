@@ -76,7 +76,7 @@ export function Sales() {
       <PageHeader
         eyebrow="Revenue & depletion"
         title="Sales entry"
-        description="Post units sold against menu SKUs. Stock is reduced using recipe quantities with unit conversion handled on the server (e.g. g → kg, each → each)."
+        description="Post units sold against menu SKUs. Stock is reduced using recipe quantities with unit conversion on the server (e.g. g → kg, each → each). Low or unknown stock does not block a sale — on-hand may go negative until you reconcile."
         meta={
           <div className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-zinc-950/50 px-3 py-2 text-xs text-muted">
             <Clock className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
@@ -113,7 +113,7 @@ export function Sales() {
             {msg && (
               <p
                 className={`text-sm ${
-                  msg.startsWith("Could") || msg.startsWith("Insufficient")
+                  msg.startsWith("Could")
                     ? "text-rose-200"
                     : "text-emerald-200/90"
                 }`}
@@ -135,8 +135,8 @@ export function Sales() {
             </li>
             <li className="flex gap-2">
               <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-violet-400" />
-              On-hand is reduced in inventory units; invalid or insufficient stock
-              returns an error from the API.
+              On-hand is reduced in inventory units. Sales are not blocked for low stock — balances can go
+              negative so you can record what actually sold; use Inventory and AI PO to correct and reorder.
             </li>
             <li className="flex gap-2">
               <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-violet-400" />

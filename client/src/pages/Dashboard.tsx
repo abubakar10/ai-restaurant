@@ -3,11 +3,10 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
-  AlertTriangle,
   ArrowRight,
   Clock,
   Package,
-  TrendingUp,
+  WandSparkles,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { qk } from "../lib/queryClient";
@@ -18,9 +17,8 @@ import { cn } from "../lib/utils";
 type DashboardRes = {
   stats: {
     ingredients: number;
-    belowPar: number;
-    salesEntries: number;
     menuItems: number;
+    approvedPoCount: number;
   };
   belowParPreview: { id: string; name: string; onHand: string; parLevel: string }[];
 };
@@ -88,7 +86,7 @@ export function Dashboard() {
       <PageHeader
         eyebrow="Operations"
         title="Inventory control center"
-        description="Real-time stock health, sales throughput, and PAR exposure across your catalog. Data refreshes automatically while this view is open."
+        description="Real-time stock health, approved AI PO count, and PAR exposure across your catalog. Data refreshes automatically while this view is open."
         meta={
           <div className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-zinc-950/50 px-3 py-2 text-xs text-muted">
             <Clock className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
@@ -107,7 +105,7 @@ export function Dashboard() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {[
           {
             label: "Active ingredients",
@@ -118,20 +116,12 @@ export function Dashboard() {
             to: "/inventory",
           },
           {
-            label: "Below PAR",
-            value: stats?.belowPar ?? "—",
-            icon: AlertTriangle,
-            hint: "Below minimum target",
-            accent: "from-amber-500 to-orange-500",
-            to: "/inventory",
-          },
-          {
-            label: "Sales entries",
-            value: stats?.salesEntries ?? "—",
-            icon: TrendingUp,
-            hint: "Recorded in system",
-            accent: "from-emerald-500 to-cyan-500",
-            to: "/sales",
+            label: "AI PO",
+            value: stats?.approvedPoCount ?? "—",
+            icon: WandSparkles,
+            hint: "Approved purchase orders (open)",
+            accent: "from-amber-500 to-rose-500",
+            to: "/suggestions",
           },
           {
             label: "Menu SKUs",

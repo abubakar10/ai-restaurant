@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock, Download, ThumbsDown, WandSparkles } from "lucide-react";
 import { api } from "../lib/api";
@@ -9,9 +9,11 @@ import { Card, CardDescription, CardHeader, CardTitle } from "../components/ui/c
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { cn } from "../lib/utils";
 
 type Line = {
   ingredientId: string;
+  supplierId: string | null;
   name: string;
   internalNumber: string;
   supplierCode: string | null;
@@ -23,7 +25,15 @@ type Line = {
   inventoryUnit: string;
   onHand: string;
   parLevel: string;
+  /** Master sheet lead (business days). */
   leadTimeBusinessDays: number;
+  supplierLeadTimeDays?: number;
+  /** Business days summed for demand (short for daily suppliers; longer for scheduled). */
+  forecastCoverBusinessDays?: number;
+  forecastModel?: "daily_short" | "scheduled_long";
+  orderingDaysNote?: string | null;
+  deliveryDaysNote?: string | null;
+  weekendsNote?: string | null;
   forecastDemand: string;
   mapePct: string;
   safetyStock: string;
@@ -40,13 +50,45 @@ type Line = {
 type PoRes = {
   generatedAt: string;
   forecastWindowDays: number;
-  forecastHorizonDays: number;
+  forecastHorizonDays: number | null;
   forecastHorizonNote?: string;
   engine?: string;
   lines: Line[];
 };
 
 type DraftLine = Line & { approvedQty: string; disapproved?: boolean };
+
+type PoCreated = {
+  poNumber: string;
+  approvedAt: string;
+  lineCount: number;
+  supplierName: string | null;
+  supplierCode: string | null;
+  portalUrl: string;
+  email: { sent: boolean; to: string; mode: string; error?: string | null };
+  totalEstimated: string;
+  pdfLines: {
+    sku: string;
+    ingredient: string;
+    vendor: string | null;
+    suggestedQty: string;
+    approvedQty: string;
+    unit: string;
+    unitCost: string | null;
+  }[];
+};
+
+type ApproveRes = {
+  pos: PoCreated[];
+  poCount: number;
+  lineCount: number;
+  vendorCount: number;
+  poNumber?: string;
+  approvedAt?: string;
+  totalEstimated: string;
+  status: string;
+};
+
 type ApprovedLine = {
   id: string;
   ingredientId: string;
@@ -56,28 +98,31 @@ type ApprovedLine = {
   inventoryUnit: string;
   suggestedQty: string;
   approvedQty: string;
+  supplierConfirmedQty: string | null;
+  supplierLineNote: string | null;
+  receivedQty: string | null;
+  receivingNote: string | null;
   unitCost: string | null;
   poNumber: string;
+  poStatus: string;
   approvedAt: string;
+  sentAt: string | null;
+  supplierApprovedAt: string | null;
+  supplierDeclinedAt: string | null;
+  supplierPoNote: string | null;
+  supplierCode: string | null;
+  supplierName: string | null;
 };
 
-type ApproveRes = {
-  poNumber: string;
-  approvedAt: string;
-  lineCount: number;
-  vendorCount: number;
-  totalEstimated: string;
-  status: string;
-  email?: {
-    sent: boolean;
-    to: string;
-    mode: "smtp" | "simulated";
-    error?: string | null;
-  };
-};
+function supplierGroupKey(line: DraftLine): string {
+  return line.supplierId ?? "__none__";
+}
 
-function priorityBadgeVariant(p: Line["priority"]) {
-  return p === "high" ? "danger" : p === "medium" ? "warning" : "muted";
+function supplierGroupLabel(lines: DraftLine[]): string {
+  const first = lines[0];
+  if (!first) return "Supplier";
+  if (first.supplierCode) return `${first.supplierCode} · ${first.vendorName ?? "Supplier"}`;
+  return first.vendorName ?? "No linked supplier";
 }
 
 export function Suggestions() {
@@ -106,49 +151,44 @@ export function Suggestions() {
           lines: draftLines
             .filter((line) => !line.disapproved)
             .map((line) => ({
-            ingredientId: line.ingredientId,
-            name: line.name,
-            internalNumber: line.internalNumber,
-            inventoryUnit: line.inventoryUnit,
-            suggestedQty: Number(line.suggestedOrderQty || 0),
-            approvedQty: Number(line.approvedQty || 0),
-            unitCost: line.unitCost == null ? null : Number(line.unitCost),
-            vendorName: line.vendorName ?? null,
+              ingredientId: line.ingredientId,
+              name: line.name,
+              internalNumber: line.internalNumber,
+              inventoryUnit: line.inventoryUnit,
+              suggestedQty: Number(line.suggestedOrderQty || 0),
+              approvedQty: Number(line.approvedQty || 0),
+              unitCost: line.unitCost == null ? null : Number(line.unitCost),
+              vendorName: line.vendorName ?? null,
             })),
         }),
       }),
     onSuccess: (res) => {
-      const approvedLines = draftLines.filter((line) => Number(line.approvedQty) > 0);
-      if (approvedLines.length) {
-        downloadPoPdf({
-          poNumber: res.poNumber,
-          approvedAt: res.approvedAt,
-          title: "Approved Purchase Order",
-          lines: approvedLines.map((line) => ({
-            sku: line.internalNumber,
-            ingredient: line.name,
-            vendor: line.vendorName,
-            suggestedQty: line.suggestedOrderQty,
-            approvedQty: line.approvedQty,
-            unit: line.inventoryUnit,
-            unitCost: line.unitCost,
-          })),
-        });
+      const pos = res.pos ?? [];
+      for (const p of pos) {
+        if (p.pdfLines?.length) {
+          downloadPoPdf({
+            poNumber: p.poNumber,
+            approvedAt: p.approvedAt,
+            title: `PO ${p.poNumber} — ${p.supplierName ?? "Supplier"}`,
+            lines: p.pdfLines,
+          });
+        }
       }
-      const approvedAt = new Intl.DateTimeFormat(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(res.approvedAt));
-      const emailLine = res.email
-        ? res.email.sent
-          ? ` Email sent to ${res.email.to}.`
-          : ` Email not sent (${res.email.mode}); target ${res.email.to}${res.email.error ? `: ${res.email.error}` : "."}`
-        : "";
+      const emailBits = pos
+        .map(
+          (p) =>
+            `${p.poNumber}: ${p.email.sent ? "sent" : "not sent"} → ${p.email.to}${
+              p.email.error ? ` (${p.email.error})` : ""
+            }`
+        )
+        .join(" · ");
       setMessage(
-        `PO ${res.poNumber} approved with ${res.lineCount} lines across ${res.vendorCount} vendor(s). Estimated total ${res.totalEstimated}. Approved ${approvedAt}.${emailLine}`
+        `Created ${res.poCount} PO(s) for ${res.vendorCount} supplier group(s), ${res.lineCount} line(s). Est. total ${res.totalEstimated}. ${emailBits}`
       );
       setDraftLines([]);
       void queryClient.invalidateQueries({ queryKey: qk.approvedPoLines });
+      void queryClient.invalidateQueries({ queryKey: qk.purchaseOrders });
+      void queryClient.invalidateQueries({ queryKey: qk.dashboard });
     },
   });
 
@@ -247,13 +287,23 @@ export function Suggestions() {
         }),
       });
       setDraftLines((prev) => prev.filter((l) => l.ingredientId !== line.ingredientId));
-      const emailLine = res.email
-        ? res.email.sent
-          ? ` Email sent to ${res.email.to}.`
-          : ` Email not sent (${res.email.mode}); target ${res.email.to}${res.email.error ? `: ${res.email.error}` : "."}`
+      const p0 = res.pos?.[0];
+      const emailLine = p0?.email
+        ? p0.email.sent
+          ? ` Email sent to ${p0.email.to}.`
+          : ` Email not sent (${p0.email.mode}); target ${p0.email.to}${p0.email.error ? `: ${p0.email.error}` : "."}`
         : "";
-      setMessage(`${line.name} moved to Approved.${emailLine}`);
+      if (p0?.pdfLines?.length) {
+        downloadPoPdf({
+          poNumber: p0.poNumber,
+          approvedAt: p0.approvedAt,
+          title: `PO ${p0.poNumber} — ${p0.supplierName ?? "Supplier"}`,
+          lines: p0.pdfLines,
+        });
+      }
+      setMessage(`${line.name} moved to sent PO.${emailLine}`);
       void queryClient.invalidateQueries({ queryKey: qk.approvedPoLines });
+      void queryClient.invalidateQueries({ queryKey: qk.purchaseOrders });
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Failed to approve.");
     }
@@ -291,6 +341,22 @@ export function Suggestions() {
     });
   }, [draftLines, searchQuery]);
 
+  const draftGroups = useMemo(() => {
+    const map = new Map<string, DraftLine[]>();
+    for (const line of filteredDraftLines) {
+      const k = supplierGroupKey(line);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(line);
+    }
+    const entries = [...map.entries()];
+    entries.sort((a, b) =>
+      supplierGroupLabel(a[1]).localeCompare(supplierGroupLabel(b[1]), undefined, {
+        sensitivity: "base",
+      })
+    );
+    return entries;
+  }, [filteredDraftLines]);
+
   const filteredApprovedLines = useMemo(() => {
     if (!searchQuery) return approvedLines;
     return approvedLines.filter((line) => {
@@ -306,10 +372,20 @@ export function Suggestions() {
       <PageHeader
         eyebrow="Procurement"
         title="AI purchase suggestions"
-        description="Milestone 2: forecast + MAPE safety over supplier lead time (business days, weekends excluded), open PO netting, supplier-feasible “Possible” qty, supervisor edit, then approve."
+        description="Forecast + MAPE, open PO netting, and pack-rounded “Possible” qty. One PO per supplier on approve."
         meta={
-          <div className="flex flex-col items-stretch gap-2 sm:items-end">
-            <div className="flex items-center justify-end gap-2">
+          <div className="flex max-w-xl flex-col items-stretch gap-2.5 sm:max-w-none sm:items-end">
+            <details className="rounded-lg border border-white/[0.08] bg-zinc-950/40 px-3 py-2 text-left text-[11px] text-muted sm:text-right">
+              <summary className="cursor-pointer list-none font-medium text-foreground/90 outline-none [&::-webkit-details-marker]:hidden">
+                How daily vs scheduled forecast works
+              </summary>
+              <p className="mt-2 leading-relaxed">
+                Short cover uses supplier lead days only when ordering <strong>and</strong> delivery are both
+                marked Daily. Otherwise the engine sums demand over a longer business-day window (weekends
+                excluded). Same rules as the supplier master sheet.
+              </p>
+            </details>
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Badge variant="warning" className="uppercase">
                 Supervisor
               </Badge>
@@ -317,27 +393,29 @@ export function Suggestions() {
                 size="sm"
                 onClick={generateSuggestions}
                 disabled={isRefetching}
-                className="min-w-44"
+                className="min-w-40 shrink-0"
               >
                 <WandSparkles className="h-4 w-4" aria-hidden />
-                {isRefetching ? "Generating..." : "Generate recommendations"}
+                {isRefetching ? "Running…" : "Generate recommendations"}
               </Button>
             </div>
             {generatedStr && data && (
-              <div className="rounded-lg border border-white/[0.08] bg-zinc-950/50 px-3 py-2 text-xs text-muted">
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Engine run
-                </span>
-                <span className="text-foreground">{generatedStr}</span>
-                <span className="mt-1 block text-[11px] text-zinc-500">
-                  Sales lookback {data.forecastWindowDays}d · lead default{" "}
-                  {data.forecastHorizonDays} business day(s)
+              <div className="rounded-lg border border-white/[0.08] bg-zinc-950/50 px-3 py-2 text-left text-[11px] text-muted sm:text-right">
+                <span className="font-medium text-foreground">{generatedStr}</span>
+                <span className="mt-1 block text-zinc-500">
+                  Lookback {data.forecastWindowDays}d
+                  {data.forecastHorizonDays != null
+                    ? ` · default ${data.forecastHorizonDays} bd`
+                    : " · cover varies by supplier"}
                   {data.engine ? ` · ${data.engine}` : ""}
                 </span>
                 {data.forecastHorizonNote && (
-                  <span className="mt-1 block text-[11px] leading-snug text-zinc-500">
-                    {data.forecastHorizonNote}
-                  </span>
+                  <details className="mt-2 text-left">
+                    <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Full engine note
+                    </summary>
+                    <p className="mt-1.5 max-h-28 overflow-y-auto leading-snug">{data.forecastHorizonNote}</p>
+                  </details>
                 )}
               </div>
             )}
@@ -346,12 +424,12 @@ export function Suggestions() {
               <span>
                 {updatedLabel ? (
                   <>
-                    View synced{" "}
+                    Synced{" "}
                     <span className="font-medium text-foreground">{updatedLabel}</span>
-                    {isFetching ? " · updating…" : ""}
+                    {isFetching ? " · …" : ""}
                   </>
                 ) : (
-                  "Click Generate recommendations to run AI"
+                  "Run Generate to load the draft table"
                 )}
               </span>
             </div>
@@ -370,14 +448,8 @@ export function Suggestions() {
           <CardHeader className="p-0">
             <CardTitle className="text-base">Draft order lines</CardTitle>
             <CardDescription>
-              Suggested quantities are editable. You can remove lines before approval.
-              <span className="mt-1 block">
-                Estimate means cost estimate: line estimate = approved qty x est. unit
-                cost, draft estimate = sum of all lines.
-              </span>
-              <span className="mt-1 block">
-                This view uses simple cards to avoid horizontal scrolling.
-              </span>
+              Table view grouped by supplier — approving sends one consolidated PO per supplier. Quantities are
+              editable; remove lines with disapprove before approval.
             </CardDescription>
           </CardHeader>
         </div>
@@ -397,17 +469,14 @@ export function Suggestions() {
         ) : (
           <>
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] bg-white/[0.015] px-4 py-3 text-xs text-muted lg:px-5">
-              <div>
-                <span className="font-semibold text-zinc-300">{filteredDraftLines.length}</span> line(s) in
-                draft · est. total{" "}
+              <div className="min-w-0">
+                <span className="font-semibold text-zinc-300">{filteredDraftLines.length}</span> lines · est.{" "}
                 <span className="font-semibold text-zinc-300">
                   {Number.isFinite(totalEstimate) ? totalEstimate.toFixed(2) : "—"}
                 </span>
-                <span className="ml-2 text-[11px] text-zinc-500">
-                  (approved qty x est. unit cost)
-                </span>
+                <span className="ml-1.5 text-[11px] text-zinc-500">(qty × unit cost)</span>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2">
                 <div className="flex items-center gap-2">
                   <Input
                     value={searchInput}
@@ -462,162 +531,229 @@ export function Suggestions() {
               </p>
             )}
 
-            <div className="grid grid-cols-1 gap-3 px-4 pb-5 pt-2 md:grid-cols-2 xl:grid-cols-3">
-              {filteredDraftLines.map((line) => (
-                <div
-                  key={line.ingredientId}
-                  className={`rounded-xl border border-white/[0.1] bg-zinc-950/50 p-4 shadow-sm shadow-black/20 ${
-                    line.disapproved ? "opacity-45 grayscale" : ""
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Badge
-                      variant={priorityBadgeVariant(line.priority)}
-                      className="uppercase"
-                    >
-                      {line.priority}
-                    </Badge>
-                    <span className="font-mono text-xs text-zinc-400">{line.internalNumber}</span>
-                  </div>
-                  <p className="mt-2 font-medium leading-snug text-foreground">{line.name}</p>
-                  <p className="mt-1 text-xs text-muted">
-                    {line.vendorName ?? "Vendor —"}{" "}
-                    {line.supplierCode ? (
-                      <span className="font-mono text-zinc-500"> · {line.supplierCode}</span>
-                    ) : null}
-                  </p>
-                  {line.supplierEmail && (
-                    <p className="mt-0.5 text-[10px] text-zinc-500">{line.supplierEmail}</p>
-                  )}
-                  <div className="mt-3 grid grid-cols-2 gap-2 border-t border-white/[0.08] pt-3 text-[11px] text-muted">
-                    <div>Forecast ({line.leadTimeBusinessDays}bd)</div>
-                    <div className="font-mono text-foreground">{line.forecastDemand}</div>
-                    <div>MAPE</div>
-                    <div className="font-mono text-foreground">{line.mapePct}%</div>
-                    <div>Safety</div>
-                    <div className="font-mono text-foreground">{line.safetyStock}</div>
-                    <div>Open PO</div>
-                    <div className="font-mono text-foreground">{line.openPoQty}</div>
-                    <div>Rec (raw)</div>
-                    <div className="font-mono text-foreground">{line.recommendedRaw}</div>
-                    <div>Possible</div>
-                    <div className="font-mono text-emerald-200/90">{line.possibleQty}</div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3 border-t border-white/[0.08] pt-3 text-sm">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-                        Possible (AI)
-                      </p>
-                      <p className="mt-0.5 font-mono text-base tabular-nums text-zinc-100">
-                        {line.suggestedOrderQty}{" "}
-                        <span className="text-xs font-sans text-muted">{line.inventoryUnit}</span>
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-                        Supervisor qty
-                      </p>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={line.approvedQty}
-                        onChange={(e) => updateApprovedQty(line.ingredientId, e.target.value)}
-                        className="mt-1 h-9"
-                        disabled={line.disapproved}
-                      />
-                      <p className="mt-1 text-[10px] text-muted">{line.inventoryUnit}</p>
-                    </div>
-                  </div>
-                  <div className="mt-3 rounded-lg bg-white/[0.03] px-3 py-2 text-xs leading-relaxed text-muted">
-                    <span className="font-mono text-[10px] text-zinc-500">AI note · </span>
-                    {line.aiNote}
-                  </div>
-                  <div className="mt-2 rounded-lg bg-white/[0.02] px-3 py-2 text-xs leading-relaxed text-muted">
-                    <span className="font-mono text-[10px] text-zinc-500">Summary · </span>
-                    {line.reason}
-                  </div>
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="w-full sm:w-auto"
-                      onClick={() => approveSingleLine(line)}
-                      disabled={Boolean(line.disapproved)}
-                    >
-                      <CheckCircle2 className="h-4 w-4" aria-hidden />
-                      Approve
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full sm:w-auto text-amber-200"
-                      onClick={() => disapproveLine(line.ingredientId)}
-                      disabled={Boolean(line.disapproved)}
-                    >
-                      <ThumbsDown className="h-4 w-4" aria-hidden />
-                      Disapprove
-                    </Button>
-                  </div>
-                </div>
-              ))}
+            <div className="overflow-x-auto px-2 pb-5 pt-2 lg:px-4">
+              <table className="w-full min-w-[920px] table-fixed border-collapse text-left text-[11px]">
+                <colgroup>
+                  <col className="w-[72px]" />
+                  <col />
+                  <col className="w-[120px]" />
+                  <col className="w-[200px]" />
+                  <col className="w-[44px]" />
+                  <col className="w-[56px]" />
+                  <col className="w-[88px]" />
+                  <col className="w-[52px]" />
+                  <col className="w-[52px]" />
+                  <col className="w-[56px]" />
+                  <col className="w-[88px]" />
+                  <col className="w-[120px]" />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-white/[0.08] text-[10px] font-semibold uppercase tracking-wider text-muted">
+                    <th className="px-1.5 py-2">SKU</th>
+                    <th className="px-1.5 py-2">Item</th>
+                    <th className="px-1.5 py-2">Vendor</th>
+                    <th className="px-1.5 py-2">Schedule</th>
+                    <th className="px-1.5 py-2">Ld</th>
+                    <th className="px-1.5 py-2">Mdl</th>
+                    <th className="px-1.5 py-2">Fcst</th>
+                    <th className="px-1.5 py-2">Map</th>
+                    <th className="px-1.5 py-2">Open</th>
+                    <th className="px-1.5 py-2">Poss</th>
+                    <th className="px-1.5 py-2">Qty</th>
+                    <th className="px-1.5 py-2 text-right">Act</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {draftGroups.map(([key, groupLines]) => (
+                    <Fragment key={key}>
+                      <tr className="bg-white/[0.06]">
+                        <td colSpan={12} className="px-2 py-2 text-[11px] font-semibold text-foreground">
+                          <span className="text-muted">Supplier group · </span>
+                          {supplierGroupLabel(groupLines)}
+                          <span className="ml-2 font-normal text-zinc-500">
+                            ({groupLines.length} line{groupLines.length === 1 ? "" : "s"} → one PO)
+                          </span>
+                        </td>
+                      </tr>
+                      {groupLines.map((line) => (
+                        <tr
+                          key={line.ingredientId}
+                          className={cn(
+                            "border-b border-white/[0.05] align-top odd:bg-transparent even:bg-white/[0.015]",
+                            line.disapproved && "opacity-45 grayscale"
+                          )}
+                        >
+                          <td className="px-1.5 py-1.5 font-mono text-[10px] text-zinc-400">
+                            {line.internalNumber}
+                          </td>
+                          <td className="px-1.5 py-1.5 leading-snug text-foreground">
+                            <span className="line-clamp-2">{line.name}</span>
+                          </td>
+                          <td
+                            className="px-1.5 py-1.5 align-top text-muted"
+                            title={
+                              [line.vendorName, line.supplierEmail].filter(Boolean).join(" · ") || undefined
+                            }
+                          >
+                            <span className="line-clamp-2 leading-snug">{line.vendorName ?? "—"}</span>
+                          </td>
+                          <td
+                            className="px-1.5 py-1.5 align-top text-[10px] leading-snug text-muted"
+                            title={[
+                              line.orderingDaysNote,
+                              line.deliveryDaysNote,
+                              line.weekendsNote ? `Weekends: ${line.weekendsNote}` : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" | ")}
+                          >
+                            <span className="text-zinc-500">Ord:</span> {line.orderingDaysNote ?? "—"}
+                            <br />
+                            <span className="text-zinc-500">Del:</span> {line.deliveryDaysNote ?? "—"}
+                            <br />
+                            <span className="text-zinc-500">Wk:</span> {line.weekendsNote ?? "—"}
+                          </td>
+                          <td className="px-1.5 py-1.5 text-center font-mono tabular-nums text-muted">
+                            {line.supplierLeadTimeDays ?? line.leadTimeBusinessDays}
+                          </td>
+                          <td className="px-1.5 py-1.5 text-center">
+                            <span
+                              className={cn(
+                                "inline-flex rounded px-1 py-0.5 text-[8px] font-bold uppercase tracking-wide",
+                                line.forecastModel === "daily_short"
+                                  ? "bg-emerald-500/15 text-emerald-200"
+                                  : "bg-amber-500/15 text-amber-100"
+                              )}
+                              title={
+                                line.forecastModel === "daily_short"
+                                  ? "Short business-day cover (daily supplier)"
+                                  : "Extended business-day cover"
+                              }
+                            >
+                              {line.forecastModel === "daily_short" ? "D" : "E"}
+                            </span>
+                          </td>
+                          <td className="px-1.5 py-1.5 text-muted" title="Demand over forecast window">
+                            <div className="font-mono text-[10px] leading-tight">{line.forecastDemand}</div>
+                            <div className="mt-0.5 font-mono text-[9px] text-zinc-500">
+                              {line.forecastCoverBusinessDays ?? line.leadTimeBusinessDays}bd
+                            </div>
+                          </td>
+                          <td className="px-1.5 py-1.5 text-center font-mono text-[10px] text-muted">
+                            {line.mapePct}
+                          </td>
+                          <td className="px-1.5 py-1.5 text-center font-mono text-[10px] text-muted">
+                            {line.openPoQty}
+                          </td>
+                          <td className="px-1.5 py-1.5 text-center font-mono text-[10px] text-emerald-200/90">
+                            {line.possibleQty}
+                          </td>
+                          <td className="px-1.5 py-1.5">
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={line.approvedQty}
+                              onChange={(e) => updateApprovedQty(line.ingredientId, e.target.value)}
+                              className="h-7 w-full min-w-0 max-w-[5.5rem] px-1.5 font-mono text-[11px]"
+                              disabled={line.disapproved}
+                            />
+                            <span className="mt-0.5 block text-center text-[9px] text-muted">
+                              {line.inventoryUnit}
+                            </span>
+                          </td>
+                          <td className="px-1.5 py-1.5 text-right">
+                            <div className="flex flex-col items-end gap-1">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className="h-7 w-full max-w-[5.5rem] px-1 text-[10px]"
+                                onClick={() => approveSingleLine(line)}
+                                disabled={Boolean(line.disapproved)}
+                              >
+                                <CheckCircle2 className="mr-0.5 inline h-3 w-3" aria-hidden />
+                                Line
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 w-full max-w-[5.5rem] px-1 text-[10px] text-amber-200"
+                                onClick={() => disapproveLine(line.ingredientId)}
+                                disabled={Boolean(line.disapproved)}
+                              >
+                                <ThumbsDown className="mr-0.5 inline h-3 w-3" aria-hidden />
+                                Drop
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
             </div>
-
           </>
         )}
       </Card>
+
       {approvedLines.length > 0 && (
         <Card className="overflow-hidden p-0">
           <div className="border-b border-white/[0.07] px-5 py-4">
             <CardHeader className="p-0">
-              <CardTitle className="text-base">Approved order lines</CardTitle>
+              <CardTitle className="text-base">Recent PO lines</CardTitle>
               <CardDescription>
-                Lines generated as PO are removed from draft and listed here.
+                Lines tied to sent / approved / received POs (supplier portal and receiving update these).
               </CardDescription>
             </CardHeader>
           </div>
-          <div className="grid grid-cols-1 gap-3 px-4 pb-5 pt-3 md:grid-cols-2 xl:grid-cols-3">
-            {filteredApprovedLines.map((line) => (
-              <div
-                key={`${line.ingredientId}-${line.poNumber}-${line.approvedAt}`}
-                className="rounded-xl border border-white/[0.1] bg-zinc-950/50 p-4 shadow-sm shadow-black/20"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-mono text-[10px] uppercase tracking-wider text-muted">
-                      PO {line.poNumber}
-                    </p>
-                    <p className="mt-1 font-medium leading-snug text-foreground">{line.name}</p>
-                    <p className="mt-1 text-xs text-muted">{line.vendorName ?? "Vendor —"}</p>
-                  </div>
-                  <span className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
-                    Approved
-                  </span>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-3 border-t border-white/[0.08] pt-3 text-sm">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">SKU</p>
-                    <p className="mt-1 font-mono text-xs text-zinc-300">{line.internalNumber}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-                      Approved qty
-                    </p>
-                    <p className="mt-1 font-mono tabular-nums text-foreground">
-                      {line.approvedQty}{" "}
-                      <span className="font-sans text-xs text-muted">{line.inventoryUnit}</span>
-                    </p>
-                  </div>
-                </div>
-                <p className="mt-3 text-[11px] text-muted">
-                  Approved{" "}
-                  {new Intl.DateTimeFormat(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  }).format(new Date(line.approvedAt))}
-                </p>
-              </div>
-            ))}
+          <div className="overflow-x-auto px-2 pb-5 pt-2">
+            <table className="w-full min-w-[900px] border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-white/[0.08] text-[10px] font-semibold uppercase tracking-wider text-muted">
+                  <th className="px-2 py-2">PO</th>
+                  <th className="px-2 py-2">Status</th>
+                  <th className="px-2 py-2">Item</th>
+                  <th className="px-2 py-2">Supplier</th>
+                  <th className="px-2 py-2">Supervisor qty</th>
+                  <th className="px-2 py-2">Supplier qty</th>
+                  <th className="px-2 py-2">Sent / approved</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredApprovedLines.map((line) => (
+                  <tr
+                    key={`${line.id}-${line.poNumber}`}
+                    className="border-b border-white/[0.05] odd:bg-transparent even:bg-white/[0.015]"
+                  >
+                    <td className="px-2 py-2 font-mono text-zinc-300">{line.poNumber}</td>
+                    <td className="px-2 py-2 text-muted">{line.poStatus}</td>
+                    <td className="px-2 py-2">
+                      <span className="font-medium text-foreground">{line.name}</span>
+                      <span className="mt-0.5 block font-mono text-[10px] text-zinc-500">
+                        {line.internalNumber}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2 text-muted">{line.supplierName ?? line.vendorName ?? "—"}</td>
+                    <td className="px-2 py-2 font-mono tabular-nums text-foreground">
+                      {line.approvedQty} <span className="text-muted">{line.inventoryUnit}</span>
+                    </td>
+                    <td className="px-2 py-2 font-mono tabular-nums text-muted">
+                      {line.supplierConfirmedQty ?? "—"}
+                    </td>
+                    <td className="px-2 py-2 text-[11px] text-muted">
+                      <div>Sent {line.sentAt ? new Date(line.sentAt).toLocaleString() : "—"}</div>
+                      <div className="mt-0.5">
+                        Supplier{" "}
+                        {line.supplierApprovedAt
+                          ? new Date(line.supplierApprovedAt).toLocaleString()
+                          : "—"}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Card>
       )}
