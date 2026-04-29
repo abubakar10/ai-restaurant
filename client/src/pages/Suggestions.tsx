@@ -532,35 +532,21 @@ export function Suggestions() {
             )}
 
             <div className="overflow-x-auto px-2 pb-5 pt-2 lg:px-4">
-              <table className="w-full min-w-[920px] table-fixed border-collapse text-left text-[11px]">
-                <colgroup>
-                  <col className="w-[72px]" />
-                  <col />
-                  <col className="w-[120px]" />
-                  <col className="w-[200px]" />
-                  <col className="w-[44px]" />
-                  <col className="w-[56px]" />
-                  <col className="w-[88px]" />
-                  <col className="w-[52px]" />
-                  <col className="w-[52px]" />
-                  <col className="w-[56px]" />
-                  <col className="w-[88px]" />
-                  <col className="w-[120px]" />
-                </colgroup>
+              <table className="w-full min-w-[1100px] border-collapse text-left text-[11px]">
                 <thead>
                   <tr className="border-b border-white/[0.08] text-[10px] font-semibold uppercase tracking-wider text-muted">
-                    <th className="px-1.5 py-2">SKU</th>
-                    <th className="px-1.5 py-2">Item</th>
-                    <th className="px-1.5 py-2">Vendor</th>
-                    <th className="px-1.5 py-2">Schedule</th>
-                    <th className="px-1.5 py-2">Ld</th>
-                    <th className="px-1.5 py-2">Mdl</th>
-                    <th className="px-1.5 py-2">Fcst</th>
-                    <th className="px-1.5 py-2">Map</th>
-                    <th className="px-1.5 py-2">Open</th>
-                    <th className="px-1.5 py-2">Poss</th>
-                    <th className="px-1.5 py-2">Qty</th>
-                    <th className="px-1.5 py-2 text-right">Act</th>
+                    <th className="px-2 py-2 whitespace-nowrap">SKU</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Item</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Vendor</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Schedule</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Ld</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Mdl</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Fcst</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Map</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Open</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Poss</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Qty</th>
+                    <th className="px-2 py-2 text-right whitespace-nowrap">Act</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -583,14 +569,14 @@ export function Suggestions() {
                             line.disapproved && "opacity-45 grayscale"
                           )}
                         >
-                          <td className="px-1.5 py-1.5 font-mono text-[10px] text-zinc-400">
+                          <td className="px-2 py-2 font-mono text-[10px] text-zinc-400 whitespace-nowrap">
                             {line.internalNumber}
                           </td>
-                          <td className="px-1.5 py-1.5 leading-snug text-foreground">
+                          <td className="px-2 py-2 leading-snug text-foreground">
                             <span className="line-clamp-2">{line.name}</span>
                           </td>
                           <td
-                            className="px-1.5 py-1.5 align-top text-muted"
+                            className="px-2 py-2 align-top text-muted"
                             title={
                               [line.vendorName, line.supplierEmail].filter(Boolean).join(" · ") || undefined
                             }

@@ -350,6 +350,23 @@ async function main() {
     orderPackLabel: "each",
     mapeFallbackPct: 0.12,
   });
+  // Explicit Santos-only ingredient with low stock so AI PO reliably includes SUP001 suggestions.
+  const santosButter = await ing({
+    internalNumber: "ITM014",
+    name: "Santos Butter Sheet",
+    class: "Bakery",
+    parLevel: 180,
+    onHand: 0.2,
+    inventoryUnit: InventoryUnit.KG,
+    supplierCode: "SUP001",
+    vendorName: "Santos Production",
+    supplierSku: "SAN-BUT-01",
+    minOrder: 2,
+    unitCost: 14,
+    orderPackAmount: 1,
+    orderPackLabel: "kg",
+    mapeFallbackPct: 0.24,
+  });
   const creamCheese = await ing({
     internalNumber: "ITM003",
     name: "Cream Cheese Block 2kg",
@@ -528,17 +545,21 @@ async function main() {
     { menuId: m001.id, ingredientId: salmon.id, amount: 92, unit: R.GRAM },
     { menuId: m001.id, ingredientId: capers.id, amount: 20, unit: R.GRAM },
     { menuId: m002.id, ingredientId: croissant.id, amount: 1, unit: R.EACH },
+    { menuId: m002.id, ingredientId: santosButter.id, amount: 140, unit: R.GRAM },
     { menuId: m002.id, ingredientId: pistachioCream.id, amount: 90, unit: R.GRAM },
     { menuId: m002.id, ingredientId: powderedSugar.id, amount: 5, unit: R.GRAM },
     { menuId: m002.id, ingredientId: choppedPistachio.id, amount: 10, unit: R.GRAM },
     { menuId: m003.id, ingredientId: croissant.id, amount: 1, unit: R.EACH },
+    { menuId: m003.id, ingredientId: santosButter.id, amount: 110, unit: R.GRAM },
     { menuId: m003.id, ingredientId: bacon.id, amount: 93, unit: R.GRAM },
     { menuId: m003.id, ingredientId: egg.id, amount: 1, unit: R.EACH },
     { menuId: m003.id, ingredientId: avocado.id, amount: 78, unit: R.GRAM },
     { menuId: m004.id, ingredientId: croissant.id, amount: 1, unit: R.EACH },
+    { menuId: m004.id, ingredientId: santosButter.id, amount: 105, unit: R.GRAM },
     { menuId: m004.id, ingredientId: ham.id, amount: 52, unit: R.GRAM },
     { menuId: m004.id, ingredientId: gouda.id, amount: 72, unit: R.GRAM },
     { menuId: m005.id, ingredientId: croissant.id, amount: 1, unit: R.EACH },
+    { menuId: m005.id, ingredientId: santosButter.id, amount: 105, unit: R.GRAM },
     { menuId: m005.id, ingredientId: bacon.id, amount: 93, unit: R.GRAM },
     { menuId: m005.id, ingredientId: egg.id, amount: 1, unit: R.EACH },
     { menuId: m005.id, ingredientId: gouda.id, amount: 50, unit: R.GRAM },
@@ -556,7 +577,10 @@ async function main() {
   /** ~45 days of daily totals (Feb–Mar style) for MAPE + weekday spikes. */
   const menus = [m001, m002, m003, m004, m005];
   const salesBatch: { menuItemId: string; quantity: number; soldAt: Date }[] = [];
-  const base = new Date(Date.UTC(2026, 0, 18, 12, 0, 0));
+  // Keep seeded sales fresh relative to "today" so forecast windows always have recent history.
+  const base = new Date();
+  base.setUTCHours(12, 0, 0, 0);
+  base.setUTCDate(base.getUTCDate() - 44);
   for (let day = 0; day < 45; day++) {
     const soldAt = new Date(base);
     soldAt.setUTCDate(base.getUTCDate() + day);
