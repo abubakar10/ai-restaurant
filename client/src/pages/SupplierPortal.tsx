@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { cn } from "../lib/utils";
+import { downloadPoPdf } from "../lib/poPdf";
 
 type PublicLine = {
   id: string;
@@ -60,6 +61,24 @@ export function SupplierPortal() {
   }, [data]);
 
   const readOnly = data?.lines?.some((l) => l.readOnly) ?? true;
+
+  const downloadSupplierPdf = () => {
+    if (!data) return;
+    downloadPoPdf({
+      poNumber: data.poNumber,
+      approvedAt: data.approvedAt,
+      title: `Supplier PO ${data.poNumber}`,
+      lines: data.lines.map((l) => ({
+        sku: l.internalNumber,
+        ingredient: l.name,
+        vendor: data.supplierName,
+        suggestedQty: l.suggestedQty,
+        approvedQty: qty[l.id] ?? l.supplierConfirmedQty ?? l.approvedQty,
+        unit: l.inventoryUnit,
+        unitCost: null,
+      })),
+    });
+  };
 
   const submitMutation = useMutation({
     mutationFn: async (action: "approve" | "decline") => {
@@ -228,6 +247,9 @@ export function SupplierPortal() {
 
             {!readOnly ? (
               <div className="flex flex-wrap gap-3">
+                <Button type="button" variant="secondary" onClick={downloadSupplierPdf}>
+                  Download PO PDF
+                </Button>
                 <Button
                   type="button"
                   onClick={() => submitMutation.mutate("approve")}
@@ -246,7 +268,12 @@ export function SupplierPortal() {
                 </Button>
               </div>
             ) : (
-              <p className="text-sm text-muted">This link is read-only — responses are already recorded.</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="button" variant="secondary" onClick={downloadSupplierPdf}>
+                  Download PO PDF
+                </Button>
+                <p className="text-sm text-muted">This link is read-only — responses are already recorded.</p>
+              </div>
             )}
 
             {submitMutation.isError && (

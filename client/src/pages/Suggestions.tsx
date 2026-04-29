@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock, Download, ThumbsDown, WandSparkles } from "lucide-react";
 import { api } from "../lib/api";
@@ -127,7 +127,14 @@ function supplierGroupLabel(lines: DraftLine[]): string {
 
 export function Suggestions() {
   const queryClient = useQueryClient();
+  const draftTableScrollRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{ active: boolean; startX: number; startLeft: number }>({
+    active: false,
+    startX: 0,
+    startLeft: 0,
+  });
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
+  const [selectedLineIds, setSelectedLineIds] = useState<string[]>([]);
   const [hasGenerated, setHasGenerated] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
@@ -149,7 +156,9 @@ export function Suggestions() {
         method: "POST",
         body: JSON.stringify({
           lines: draftLines
-            .filter((line) => !line.disapproved)
+            .filter(
+              (line) => !line.disapproved && selectedLineIds.includes(line.ingredientId)
+            )
             .map((line) => ({
               ingredientId: line.ingredientId,
               name: line.name,
@@ -164,16 +173,6 @@ export function Suggestions() {
       }),
     onSuccess: (res) => {
       const pos = res.pos ?? [];
-      for (const p of pos) {
-        if (p.pdfLines?.length) {
-          downloadPoPdf({
-            poNumber: p.poNumber,
-            approvedAt: p.approvedAt,
-            title: `PO ${p.poNumber} — ${p.supplierName ?? "Supplier"}`,
-            lines: p.pdfLines,
-          });
-        }
-      }
       const emailBits = pos
         .map(
           (p) =>
@@ -186,6 +185,7 @@ export function Suggestions() {
         `Created ${res.poCount} PO(s) for ${res.vendorCount} supplier group(s), ${res.lineCount} line(s). Est. total ${res.totalEstimated}. ${emailBits}`
       );
       setDraftLines([]);
+      setSelectedLineIds([]);
       void queryClient.invalidateQueries({ queryKey: qk.approvedPoLines });
       void queryClient.invalidateQueries({ queryKey: qk.purchaseOrders });
       void queryClient.invalidateQueries({ queryKey: qk.dashboard });
@@ -201,6 +201,7 @@ export function Suggestions() {
         disapproved: false,
       }))
     );
+    setSelectedLineIds(data.lines.map((line) => line.ingredientId));
     setMessage(null);
   }, [data]);
 
@@ -224,6 +225,7 @@ export function Suggestions() {
         line.ingredientId === ingredientId ? { ...line, disapproved: true, approvedQty: "0" } : line
       )
     );
+    setSelectedLineIds((prev) => prev.filter((id) => id !== ingredientId));
   };
 
   const runSearch = () => {
@@ -263,49 +265,23 @@ export function Suggestions() {
     });
   };
 
-  const approveSingleLine = async (line: DraftLine) => {
-    if (Number(line.approvedQty) <= 0) {
-      setMessage("Approved quantity must be greater than zero.");
-      return;
-    }
-    try {
-      const res = await api<ApproveRes>("/suggestions/po/approve", {
-        method: "POST",
-        body: JSON.stringify({
-          lines: [
-            {
-              ingredientId: line.ingredientId,
-              name: line.name,
-              internalNumber: line.internalNumber,
-              inventoryUnit: line.inventoryUnit,
-              suggestedQty: Number(line.suggestedOrderQty || 0),
-              approvedQty: Number(line.approvedQty),
-              unitCost: line.unitCost == null ? null : Number(line.unitCost),
-              vendorName: line.vendorName ?? null,
-            },
-          ],
-        }),
-      });
-      setDraftLines((prev) => prev.filter((l) => l.ingredientId !== line.ingredientId));
-      const p0 = res.pos?.[0];
-      const emailLine = p0?.email
-        ? p0.email.sent
-          ? ` Email sent to ${p0.email.to}.`
-          : ` Email not sent (${p0.email.mode}); target ${p0.email.to}${p0.email.error ? `: ${p0.email.error}` : "."}`
-        : "";
-      if (p0?.pdfLines?.length) {
-        downloadPoPdf({
-          poNumber: p0.poNumber,
-          approvedAt: p0.approvedAt,
-          title: `PO ${p0.poNumber} — ${p0.supplierName ?? "Supplier"}`,
-          lines: p0.pdfLines,
-        });
-      }
-      setMessage(`${line.name} moved to sent PO.${emailLine}`);
-      void queryClient.invalidateQueries({ queryKey: qk.approvedPoLines });
-      void queryClient.invalidateQueries({ queryKey: qk.purchaseOrders });
-    } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Failed to approve.");
+  const toggleLineSelection = (ingredientId: string) => {
+    setSelectedLineIds((prev) =>
+      prev.includes(ingredientId) ? prev.filter((id) => id !== ingredientId) : [...prev, ingredientId]
+    );
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visibleSelectable = filteredDraftLines
+      .filter((l) => !l.disapproved)
+      .map((l) => l.ingredientId);
+    const allSelected =
+      visibleSelectable.length > 0 &&
+      visibleSelectable.every((id) => selectedLineIds.includes(id));
+    if (allSelected) {
+      setSelectedLineIds((prev) => prev.filter((id) => !visibleSelectable.includes(id)));
+    } else {
+      setSelectedLineIds((prev) => Array.from(new Set([...prev, ...visibleSelectable])));
     }
   };
 
@@ -366,6 +342,40 @@ export function Suggestions() {
       return haystack.includes(searchQuery);
     });
   }, [approvedLines, searchQuery]);
+  const selectedCount = useMemo(
+    () =>
+      draftLines.filter(
+        (l) => !l.disapproved && selectedLineIds.includes(l.ingredientId) && Number(l.approvedQty) > 0
+      ).length,
+    [draftLines, selectedLineIds]
+  );
+
+  const startDragScroll = (e: React.MouseEvent<HTMLDivElement>) => {
+    const container = draftTableScrollRef.current;
+    if (!container) return;
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("input, button, select, textarea, a, label")) return;
+    dragStateRef.current = {
+      active: true,
+      startX: e.clientX,
+      startLeft: container.scrollLeft,
+    };
+    container.classList.add("drag-scroll-active");
+  };
+
+  const onDragScroll = (e: React.MouseEvent<HTMLDivElement>) => {
+    const container = draftTableScrollRef.current;
+    if (!container || !dragStateRef.current.active) return;
+    const dx = e.clientX - dragStateRef.current.startX;
+    container.scrollLeft = dragStateRef.current.startLeft - dx;
+  };
+
+  const stopDragScroll = () => {
+    const container = draftTableScrollRef.current;
+    dragStateRef.current.active = false;
+    if (container) container.classList.remove("drag-scroll-active");
+  };
 
   return (
     <div className="space-y-6">
@@ -504,13 +514,16 @@ export function Suggestions() {
                   size="sm"
                   onClick={() => approveMutation.mutate()}
                   disabled={
-                    filteredDraftLines.length === 0 || hasInvalidQty || approveMutation.isPending
+                    selectedCount === 0 || hasInvalidQty || approveMutation.isPending
                   }
                 >
                   <CheckCircle2 className="h-4 w-4" aria-hidden />
-                  {approveMutation.isPending ? "Approving..." : "Approve PO draft"}
+                  {approveMutation.isPending ? "Approving..." : `Approve selected (${selectedCount})`}
                 </Button>
               </div>
+            </div>
+            <div className="px-4 pb-2 text-[11px] text-zinc-500 lg:px-5">
+              Tip: select multiple items first, then approve once to keep one consolidated PO per supplier.
             </div>
 
             {hasInvalidQty && (
@@ -531,20 +544,41 @@ export function Suggestions() {
               </p>
             )}
 
-            <div className="overflow-x-auto px-2 pb-5 pt-2 lg:px-4">
-              <table className="w-full min-w-[1100px] border-collapse text-left text-[11px]">
+            <div
+              ref={draftTableScrollRef}
+              className="drag-scroll no-scrollbar overflow-x-auto scroll-smooth px-2 pb-5 pt-2 lg:px-4 touch-pan-x"
+              onMouseDown={startDragScroll}
+              onMouseMove={onDragScroll}
+              onMouseUp={stopDragScroll}
+              onMouseLeave={stopDragScroll}
+            >
+              <table className="w-full min-w-[980px] border-collapse text-left text-[11px]">
                 <thead>
                   <tr className="border-b border-white/[0.08] text-[10px] font-semibold uppercase tracking-wider text-muted">
+                    <th className="px-2 py-2 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        className="h-5 w-5 cursor-pointer accent-violet-500"
+                        checked={
+                          filteredDraftLines.filter((l) => !l.disapproved).length > 0 &&
+                          filteredDraftLines
+                            .filter((l) => !l.disapproved)
+                            .every((l) => selectedLineIds.includes(l.ingredientId))
+                        }
+                        onChange={toggleSelectAllVisible}
+                        aria-label="Select all visible lines"
+                      />
+                    </th>
                     <th className="px-2 py-2 whitespace-nowrap">SKU</th>
                     <th className="px-2 py-2 whitespace-nowrap">Item</th>
                     <th className="px-2 py-2 whitespace-nowrap">Vendor</th>
                     <th className="px-2 py-2 whitespace-nowrap">Schedule</th>
-                    <th className="px-2 py-2 whitespace-nowrap">Ld</th>
-                    <th className="px-2 py-2 whitespace-nowrap">Mdl</th>
-                    <th className="px-2 py-2 whitespace-nowrap">Fcst</th>
-                    <th className="px-2 py-2 whitespace-nowrap">Map</th>
-                    <th className="px-2 py-2 whitespace-nowrap">Open</th>
-                    <th className="px-2 py-2 whitespace-nowrap">Poss</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Lead time</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Model</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Forecast</th>
+                    <th className="px-2 py-2 whitespace-nowrap">MAPE</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Open PO</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Possible</th>
                     <th className="px-2 py-2 whitespace-nowrap">Qty</th>
                     <th className="px-2 py-2 text-right whitespace-nowrap">Act</th>
                   </tr>
@@ -553,7 +587,7 @@ export function Suggestions() {
                   {draftGroups.map(([key, groupLines]) => (
                     <Fragment key={key}>
                       <tr className="bg-white/[0.06]">
-                        <td colSpan={12} className="px-2 py-2 text-[11px] font-semibold text-foreground">
+                        <td colSpan={13} className="px-2 py-2 text-[11px] font-semibold text-foreground">
                           <span className="text-muted">Supplier group · </span>
                           {supplierGroupLabel(groupLines)}
                           <span className="ml-2 font-normal text-zinc-500">
@@ -569,6 +603,16 @@ export function Suggestions() {
                             line.disapproved && "opacity-45 grayscale"
                           )}
                         >
+                          <td className="px-2 py-2">
+                            <input
+                              type="checkbox"
+                              className="h-5 w-5 cursor-pointer accent-violet-500"
+                              checked={selectedLineIds.includes(line.ingredientId)}
+                              onChange={() => toggleLineSelection(line.ingredientId)}
+                              disabled={Boolean(line.disapproved)}
+                              aria-label={`Select ${line.name}`}
+                            />
+                          </td>
                           <td className="px-2 py-2 font-mono text-[10px] text-zinc-400 whitespace-nowrap">
                             {line.internalNumber}
                           </td>
@@ -616,13 +660,13 @@ export function Suggestions() {
                                   : "Extended business-day cover"
                               }
                             >
-                              {line.forecastModel === "daily_short" ? "D" : "E"}
+                              {line.forecastModel === "daily_short" ? "Daily" : "Extended"}
                             </span>
                           </td>
                           <td className="px-1.5 py-1.5 text-muted" title="Demand over forecast window">
                             <div className="font-mono text-[10px] leading-tight">{line.forecastDemand}</div>
                             <div className="mt-0.5 font-mono text-[9px] text-zinc-500">
-                              {line.forecastCoverBusinessDays ?? line.leadTimeBusinessDays}bd
+                              {line.forecastCoverBusinessDays ?? line.leadTimeBusinessDays} business days
                             </div>
                           </td>
                           <td className="px-1.5 py-1.5 text-center font-mono text-[10px] text-muted">
@@ -650,16 +694,6 @@ export function Suggestions() {
                           </td>
                           <td className="px-1.5 py-1.5 text-right">
                             <div className="flex flex-col items-end gap-1">
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                className="h-7 w-full max-w-[5.5rem] px-1 text-[10px]"
-                                onClick={() => approveSingleLine(line)}
-                                disabled={Boolean(line.disapproved)}
-                              >
-                                <CheckCircle2 className="mr-0.5 inline h-3 w-3" aria-hidden />
-                                Line
-                              </Button>
                               <Button
                                 variant="outline"
                                 size="sm"

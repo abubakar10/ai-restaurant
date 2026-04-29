@@ -205,6 +205,25 @@ html[data-theme="light"] .gradient-text {
   color: #f4f2ff;
 }
 
+/* Keep horizontal scroll usable while hiding the visible bar. */
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE/Edge legacy */
+  scrollbar-width: none; /* Firefox */
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Opera */
+}
+
+.drag-scroll {
+  cursor: grab;
+  user-select: none;
+}
+
+.drag-scroll.drag-scroll-active {
+  cursor: grabbing;
+}
+
 html[data-theme="light"] .inventory-select option {
   background-color: #ffffff;
   color: #171923;
