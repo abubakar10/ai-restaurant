@@ -367,6 +367,22 @@ async function main() {
     orderPackLabel: "kg",
     mapeFallbackPct: 0.24,
   });
+  const santosSesame = await ing({
+    internalNumber: "ITM015",
+    name: "Santos Sesame Mix",
+    class: "Bakery",
+    parLevel: 26,
+    onHand: 0.4,
+    inventoryUnit: InventoryUnit.KG,
+    supplierCode: "SUP001",
+    vendorName: "Santos Production",
+    supplierSku: "SAN-SES-01",
+    minOrder: 2,
+    unitCost: 11,
+    orderPackAmount: 1,
+    orderPackLabel: "kg",
+    mapeFallbackPct: 0.2,
+  });
   const creamCheese = await ing({
     internalNumber: "ITM003",
     name: "Cream Cheese Block 2kg",
@@ -541,16 +557,19 @@ async function main() {
   const R = RecipeUnit;
   const lines: { menuId: string; ingredientId: string; amount: number; unit: RecipeUnit }[] = [
     { menuId: m001.id, ingredientId: bagel.id, amount: 1, unit: R.EACH },
+    { menuId: m001.id, ingredientId: santosSesame.id, amount: 30, unit: R.GRAM },
     { menuId: m001.id, ingredientId: creamCheese.id, amount: 57, unit: R.GRAM },
     { menuId: m001.id, ingredientId: salmon.id, amount: 92, unit: R.GRAM },
     { menuId: m001.id, ingredientId: capers.id, amount: 20, unit: R.GRAM },
     { menuId: m002.id, ingredientId: croissant.id, amount: 1, unit: R.EACH },
     { menuId: m002.id, ingredientId: santosButter.id, amount: 140, unit: R.GRAM },
+    { menuId: m002.id, ingredientId: santosSesame.id, amount: 18, unit: R.GRAM },
     { menuId: m002.id, ingredientId: pistachioCream.id, amount: 90, unit: R.GRAM },
     { menuId: m002.id, ingredientId: powderedSugar.id, amount: 5, unit: R.GRAM },
     { menuId: m002.id, ingredientId: choppedPistachio.id, amount: 10, unit: R.GRAM },
     { menuId: m003.id, ingredientId: croissant.id, amount: 1, unit: R.EACH },
     { menuId: m003.id, ingredientId: santosButter.id, amount: 110, unit: R.GRAM },
+    { menuId: m003.id, ingredientId: santosSesame.id, amount: 14, unit: R.GRAM },
     { menuId: m003.id, ingredientId: bacon.id, amount: 93, unit: R.GRAM },
     { menuId: m003.id, ingredientId: egg.id, amount: 1, unit: R.EACH },
     { menuId: m003.id, ingredientId: avocado.id, amount: 78, unit: R.GRAM },

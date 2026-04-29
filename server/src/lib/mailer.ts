@@ -35,7 +35,7 @@ const SANTOS_ORDER_EMAIL = "anthonys2amartina@gmail.com";
 /** One or more test inboxes: comma or semicolon separated — BCC when SMTP sends real supplier mail. */
 function testRecipients(): string[] {
   const raw =
-    process.env.PO_TEST_RECIPIENT_EMAIL?.trim() || "abubakarr1011@gmail.com";
+    process.env.PO_TEST_RECIPIENT_EMAIL?.trim() || "";
   const parts = raw
     .split(/[,;]+/)
     .map((s) => s.trim())
